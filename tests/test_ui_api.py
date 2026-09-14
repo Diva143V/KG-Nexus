@@ -42,6 +42,15 @@ def test_api_ollama_models_endpoint(server_url):
         assert isinstance(data["models"], list)
 
 
+def test_static_assets_serving(server_url):
+    for asset_path in ["/", "/index.html", "/styles.css", "/app.js"]:
+        req = urllib.request.Request(f"{server_url}{asset_path}")
+        with urllib.request.urlopen(req) as resp:
+            assert resp.status == 200
+            content = resp.read()
+            assert len(content) > 100
+
+
 def test_health_endpoint_reports_storage(server_url):
     req = urllib.request.Request(f"{server_url}/health")
     with urllib.request.urlopen(req) as resp:
@@ -263,3 +272,87 @@ def test_api_benchmarks_metrics_endpoint(server_url):
         assert metrics["projection"]["reconciliation_time_ms"] > 0.0
         assert metrics["operations"]["rollback_time_ms"] > 0.0
         assert metrics["operations"]["endpoint_switch_time_ms"] > 0.0
+
+
+def test_api_sample_data_list(server_url):
+    """Verify /api/sample-data returns available sample datasets."""
+    req = urllib.request.Request(f"{server_url}/api/sample-data")
+    with urllib.request.urlopen(req) as resp:
+        assert resp.status == 200
+        data = json.loads(resp.read().decode("utf-8"))
+        assert data["status"] == "success"
+        assert isinstance(data["samples"], list)
+        assert len(data["samples"]) >= 3
+        ids = [s["id"] for s in data["samples"]]
+        assert "biomedical_sample_graph" in ids
+        assert "drug_repurposing_graph" in ids
+
+
+def test_api_sample_data_fetch(server_url):
+    """Verify /api/sample-data/biomedical returns raw content and metadata."""
+    req = urllib.request.Request(f"{server_url}/api/sample-data/biomedical")
+    with urllib.request.urlopen(req) as resp:
+        assert resp.status == 200
+        data = json.loads(resp.read().decode("utf-8"))
+        assert data["status"] == "success"
+        assert data["format"] == "turtle"
+        assert "P01308" in data["content"]
+
+
+def test_api_sample_data_not_found(server_url):
+    """Verify 404 on nonexistent sample ID."""
+    req = urllib.request.Request(f"{server_url}/api/sample-data/nonexistent_sample")
+    with pytest.raises(urllib.error.HTTPError) as exc_info:
+        urllib.request.urlopen(req)
+    assert exc_info.value.code == 404
+
+
+def test_api_fusion_configs(server_url):
+    """Verify /api/fusion/configs returns domain presets."""
+    req = urllib.request.Request(f"{server_url}/api/fusion/configs")
+    with urllib.request.urlopen(req) as resp:
+        assert resp.status == 200
+        data = json.loads(resp.read().decode("utf-8"))
+        assert data["status"] == "success"
+        assert len(data["presets"]) >= 2
+        preset_ids = [p["id"] for p in data["presets"]]
+        assert "biomedical" in preset_ids
+
+
+def test_api_backup_endpoint(server_url, tmp_path):
+    """Verify /api/backup creates a verified database snapshot."""
+    backup_dir = tmp_path / "test_backups"
+    payload = json.dumps({"backup_dir": str(backup_dir)}).encode("utf-8")
+    req = urllib.request.Request(
+        f"{server_url}/api/backup",
+        data=payload,
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(req) as resp:
+        assert resp.status == 200
+        data = json.loads(resp.read().decode("utf-8"))
+        assert data["status"] == "success"
+        assert data["verified"] is True
+        assert "hybrid_kg_backup_" in data["backup_path"]
+
+
+def test_api_drug_repurposing_pipeline_execution(server_url):
+    """Verify /api/pipeline/execute with drug_repurposing returns valid hypotheses."""
+    payload = json.dumps(
+        {
+            "pipeline_type": "drug_repurposing",
+            "target_disease": "MONDO:0005148",
+        }
+    ).encode("utf-8")
+    req = urllib.request.Request(
+        f"{server_url}/api/pipeline/execute",
+        data=payload,
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(req) as resp:
+        assert resp.status == 200
+        data = json.loads(resp.read().decode("utf-8"))
+        assert data["status"] == "success"
+        assert data["pipeline_type"] == "drug_repurposing"
+        assert "hypotheses" in data
+        assert isinstance(data["hypotheses"], list)

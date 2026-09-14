@@ -56,6 +56,7 @@ from infrastructure.storage import (
 )
 
 UI_DIR = Path(__file__).resolve().parent.parent.parent / "applications" / "ui"
+TESTDATA_DIR = Path(__file__).resolve().parent.parent.parent / "testdata"
 MAX_REQUEST_BYTES = int(os.getenv("HYBRID_KG_MAX_REQUEST_BYTES", str(10 * 1024 * 1024)))
 CORS_ORIGIN = os.getenv("HYBRID_KG_CORS_ORIGIN", "http://127.0.0.1:8000")
 
@@ -276,6 +277,84 @@ class PlatformRequestHandler(BaseHTTPRequestHandler):
                     {"status": "error", "message": f"Benchmark execution failed: {exc}"},
                     status=500,
                 )
+            return
+
+        if path == "/api/sample-data":
+            samples = [
+                {
+                    "id": "biomedical_sample_graph",
+                    "file_name": "biomedical_sample_graph.ttl",
+                    "name": "Biomedical Sample Graph (INS / Metformin / T2D)",
+                    "format": "turtle",
+                    "domain": "biomedical",
+                    "description": "RDF Turtle dataset linking Insulin (HGNC:6018 / P01308), Metformin, and Type 2 Diabetes (MONDO:0005148).",
+                },
+                {
+                    "id": "drug_repurposing_graph",
+                    "file_name": "drug_repurposing_graph.csv",
+                    "name": "Drug Repurposing Graph (CSV Triples)",
+                    "format": "csv",
+                    "domain": "biomedical",
+                    "description": "Tabular triples with confidence scores and provenance sources for diabetes and cancer targets.",
+                },
+                {
+                    "id": "synthetic_people_org_graph",
+                    "file_name": "synthetic_people_org_graph.jsonld",
+                    "name": "Synthetic Organization Graph (JSON-LD)",
+                    "format": "jsonld",
+                    "domain": "synthetic",
+                    "description": "JSON-LD graph linking people to companies, departments, and roles.",
+                },
+            ]
+            self._send_json({"status": "success", "samples": samples})
+            return
+
+        if path.startswith("/api/sample-data/"):
+            sample_id = urllib.parse.unquote(path.removeprefix("/api/sample-data/")).strip()
+            sample_file_map = {
+                "biomedical": "biomedical_sample_graph.ttl",
+                "biomedical_sample_graph": "biomedical_sample_graph.ttl",
+                "biomedical_sample_graph.ttl": "biomedical_sample_graph.ttl",
+                "drug_repurposing": "drug_repurposing_graph.csv",
+                "drug_repurposing_graph": "drug_repurposing_graph.csv",
+                "drug_repurposing_graph.csv": "drug_repurposing_graph.csv",
+                "synthetic": "synthetic_people_org_graph.jsonld",
+                "synthetic_people_org_graph": "synthetic_people_org_graph.jsonld",
+                "synthetic_people_org_graph.jsonld": "synthetic_people_org_graph.jsonld",
+            }
+            file_name = sample_file_map.get(sample_id)
+            if not file_name:
+                self._send_json(
+                    {"status": "error", "message": f"Sample dataset '{sample_id}' not found."},
+                    status=404,
+                )
+                return
+
+            sample_path = TESTDATA_DIR / file_name
+            if not sample_path.is_file():
+                self._send_json(
+                    {
+                        "status": "error",
+                        "message": f"Sample file '{file_name}' does not exist on disk.",
+                    },
+                    status=404,
+                )
+                return
+
+            ext = sample_path.suffix.lower()
+            fmt = (
+                "turtle" if ext == ".ttl" else ("jsonld" if ext in (".json", ".jsonld") else "csv")
+            )
+            content = sample_path.read_text(encoding="utf-8")
+            self._send_json(
+                {
+                    "status": "success",
+                    "sample_id": sample_id,
+                    "file_name": file_name,
+                    "format": fmt,
+                    "content": content,
+                }
+            )
             return
 
         if path == "/api/fusion/configs":
