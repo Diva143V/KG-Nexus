@@ -1,0 +1,8 @@
+subject,predicate,object,confidence,source
+HGNC:6018,associated_with,MONDO:0005148,0.98,DisGeNET
+HGNC:6018,encodes,UniProt:P01308,1.0,NCBI_Gene
+ChEMBL:CHEMBL1431,targets,UniProt:P01308,0.95,ChEMBL_v33
+ChEMBL:CHEMBL1431,treats,MONDO:0005148,0.92,ClinicalTrials_Gov
+HGNC:110,associated_with,MONDO:0005267,0.89,DisGeNET
+HGNC:110,encodes,UniProt:P00533,1.0,NCBI_Gene
+ChEMBL:CHEMBL939,targets,UniProt:P00533,0.94,ChEMBL_v33

@@ -1,0 +1,37 @@
+[
+  {
+    "id": {"namespace": "policy", "value": "promotion-evidence"},
+    "name": "promotion-requires-evidence-and-confidence",
+    "kind": "promotion",
+    "version": "1.0.0",
+    "severity": "high",
+    "description": "Promoted assertions require supporting evidence and a confidence floor.",
+    "conditions": [
+      {"op": "gte", "field": "confidence", "threshold": "min_confidence"},
+      {"op": "exists", "field": "subject"},
+      {"op": "exists", "field": "object"}
+    ],
+    "thresholds": {"min_confidence": 0.8},
+    "required_evidence": ["source_record"],
+    "actions": ["require_curator_confirmation"],
+    "review_routing": {"role": "curator", "reason_code": "evidence_review"}
+  },
+  {
+    "id": {"namespace": "policy", "value": "verification-confidence"},
+    "name": "verification-requires-high-confidence",
+    "kind": "verification",
+    "version": "1.0.0",
+    "severity": "medium",
+    "conditions": [
+      {
+        "op": "any",
+        "children": [
+          {"op": "gte", "field": "confidence", "threshold": "verified_confidence"},
+          {"op": "exists", "field": "manual_review"}
+        ]
+      }
+    ],
+    "thresholds": {"verified_confidence": 0.95},
+    "required_evidence": ["analysis_record"]
+  }
+]

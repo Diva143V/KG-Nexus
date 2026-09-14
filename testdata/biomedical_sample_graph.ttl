@@ -1,0 +1,27 @@
+# Sample Biomedical Knowledge Graph Dataset (RDF Turtle Format)
+@prefix bio: <http://example.org/biomedical/> .
+@prefix hgnc: <http://identifiers.org/hgnc/> .
+@prefix uniprot: <http://identifiers.org/uniprot/> .
+@prefix chebi: <http://identifiers.org/chebi/> .
+@prefix mondo: <http://identifiers.org/mondo/> .
+@prefix chembl: <http://identifiers.org/chembl/> .
+
+# Gene -> Protein Encoding
+hgnc:6018 bio:encodes uniprot:P01308 .
+hgnc:6018 bio:gene_symbol "INS" .
+hgnc:6018 bio:associated_with mondo:0005148 .
+
+# Protein Target -> Drug Interactions
+chembl:CHEMBL1431 bio:targets uniprot:P01308 .
+chembl:CHEMBL1431 bio:drug_name "Metformin" .
+chembl:CHEMBL1431 bio:treats mondo:0005148 .
+
+# Chemical Modulator -> Disease Associations
+chebi:CHEBI15365 bio:modulates uniprot:P01308 .
+chebi:CHEBI15365 bio:chemical_name "D-Glucose" .
+mondo:0005148 bio:disease_name "Type 2 Diabetes Mellitus" .
+
+# Additional Disease Gene Links
+hgnc:110 bio:encodes uniprot:P00533 .
+hgnc:110 bio:associated_with mondo:0005267 .
+chembl:CHEMBL939 bio:targets uniprot:P00533 .

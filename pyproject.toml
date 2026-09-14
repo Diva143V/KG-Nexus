@@ -1,0 +1,58 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hybrid-kg"
+version = "0.0.0"
+description = "Domain-neutral knowledge-graph platform (Phase 0 scaffold)"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "pyarrow>=25,<26",
+    "pydantic>=2.7,<3",
+    "pydantic-settings>=2.3,<3",
+    "rdflib>=7.0.0,<8",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8,<9",
+    "ruff>=0.5,<1",
+    "mypy>=1.10,<2",
+]
+
+[tool.setuptools.packages.find]
+include = [
+    "core*",
+    "sdk*",
+    "contracts*",
+    "policies*",
+    "plugins*",
+    "infrastructure*",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+plugins = ["pydantic.mypy"]
+packages = ["core", "sdk", "contracts", "policies", "plugins", "infrastructure"]
+
+[[tool.mypy.overrides]]
+module = ["pyarrow", "pyarrow.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["sentence_transformers", "sentence_transformers.*"]
+ignore_missing_imports = true

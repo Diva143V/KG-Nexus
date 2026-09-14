@@ -1,0 +1,13 @@
+{
+  "response": {
+    "docs": [
+      {
+        "hgnc_id": "HGNC:6018",
+        "symbol": "INS",
+        "name": "insulin",
+        "status": "Approved",
+        "locus_group": "protein-coding gene"
+      }
+    ]
+  }
+}

@@ -1,0 +1,41 @@
+{
+  "@context": {
+    "name": "http://schema.org/name",
+    "worksFor": "http://schema.org/worksFor",
+    "locatedIn": "http://schema.org/locatedIn",
+    "Person": "http://schema.org/Person",
+    "Organization": "http://schema.org/Organization",
+    "City": "http://schema.org/City"
+  },
+  "@graph": [
+    {
+      "@id": "synth:person_alice",
+      "@type": "Person",
+      "name": "Alice Johnson",
+      "worksFor": {
+        "@id": "synth:org_acme"
+      }
+    },
+    {
+      "@id": "synth:person_bob",
+      "@type": "Person",
+      "name": "Bob Smith",
+      "worksFor": {
+        "@id": "synth:org_acme"
+      }
+    },
+    {
+      "@id": "synth:org_acme",
+      "@type": "Organization",
+      "name": "Acme BioTech Inc.",
+      "locatedIn": {
+        "@id": "synth:city_boston"
+      }
+    },
+    {
+      "@id": "synth:city_boston",
+      "@type": "City",
+      "name": "Boston, MA"
+    }
+  ]
+}

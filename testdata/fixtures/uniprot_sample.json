@@ -1,0 +1,10 @@
+{
+  "primaryAccession": "P01308",
+  "uniProtkbId": "INS_HUMAN",
+  "proteinDescription": {
+    "recommendedName": {
+      "fullName": { "value": "Insulin" }
+    }
+  },
+  "organism": { "taxonId": 9606 }
+}
