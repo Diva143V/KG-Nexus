@@ -65,6 +65,8 @@ logs/
 scratch/
 tmp/
 temp/
+backups/
+backup/
 
 # ==============================================================================
 # Environment Variables & Secrets
