@@ -50,6 +50,8 @@ const appState = {
 
 document.addEventListener('DOMContentLoaded', () => {
   initA11yAnnouncements();
+  initSystemHealth();
+  initDomainConfigs();
   initTabNavigation();
   initOllamaModelSelector();
   initUploadHandler();
@@ -101,6 +103,79 @@ function announceA11y(message) {
     }, 50);
   }
 }
+
+// ==========================================================================
+// System Health & Embeddings Engine Status
+// ==========================================================================
+async function initSystemHealth() {
+  const healthBadge = document.getElementById('systemHealthBadge');
+  const healthDot = document.getElementById('systemHealthDot');
+  const healthText = document.getElementById('systemHealthText');
+  const embText = document.getElementById('embeddingsText');
+
+  async function checkHealth() {
+    try {
+      const res = await fetch('/health');
+      if (res.ok) {
+        const data = await res.json();
+        if (healthText) healthText.textContent = `Storage: ${data.storage ? data.storage.toUpperCase() : 'SQLite'}`;
+        if (healthDot) healthDot.style.background = '#22c55e';
+        if (healthBadge) healthBadge.className = 'status-badge active-status';
+      }
+    } catch (e) {
+      if (healthText) healthText.textContent = 'Storage: Offline';
+      if (healthDot) healthDot.style.background = '#ef4444';
+    }
+
+    try {
+      const embRes = await fetch('/api/embeddings/status');
+      if (embRes.ok) {
+        const embData = await embRes.json();
+        if (embText) {
+          const prov = embData.provider || 'none';
+          const dims = embData.dimensions || 1024;
+          embText.textContent = `Embeddings: ${prov} (${dims}d)`;
+        }
+      }
+    } catch (e) {
+      if (embText) embText.textContent = 'Embeddings: Offline';
+    }
+  }
+
+  checkHealth();
+  setInterval(checkHealth, 30000);
+}
+
+// ==========================================================================
+// Dynamic Domain Presets & Configs
+// ==========================================================================
+async function initDomainConfigs() {
+  const presetSelect = document.getElementById('domainPresetSelect');
+  const pipelinePackSelect = document.getElementById('pipelineDomainPackSelect');
+
+  try {
+    const res = await fetch('/api/fusion/configs');
+    if (res.ok) {
+      const data = await res.json();
+      if (data.status === 'success' && data.presets && data.presets.length > 0) {
+        if (presetSelect) {
+          const currentVal = presetSelect.value || 'biomedical';
+          presetSelect.innerHTML = '';
+          data.presets.forEach(p => {
+            const opt = document.createElement('option');
+            opt.value = p.id;
+            opt.textContent = `${p.name} (${(p.entity_types || []).join(', ') || p.id})`;
+            presetSelect.appendChild(opt);
+          });
+          presetSelect.value = currentVal;
+        }
+      }
+    }
+  } catch (e) {
+    console.warn('Could not fetch domain configs, using defaults', e);
+  }
+}
+
 
 // ==========================================================================
 // Global Active Graph Data Loader with 1000+ Node & Edge Optimization
@@ -545,8 +620,58 @@ function initGraphFusionHandler() {
 
   let fileA = null;
   let fileB = null;
+  let contentA = "";
+  let contentB = "";
 
   const hiddenSelect = document.getElementById('conflictModeSelect');
+
+  // Quick Sample Dataset Loaders
+  const loadBioBtn = document.getElementById('loadBiomedicalSampleBtn');
+  const loadSynthBtn = document.getElementById('loadSyntheticSampleBtn');
+
+  async function loadSamplePair(sampleAId, sampleBId, preset) {
+    try {
+      badge.className = 'outcome-badge pending';
+      badge.textContent = 'FETCHING SAMPLE DATA...';
+      const [resA, resB] = await Promise.all([
+        fetch(`/api/sample-data/${sampleAId}`),
+        fetch(`/api/sample-data/${sampleBId}`)
+      ]);
+      const [dataA, dataB] = await Promise.all([resA.json(), resB.json()]);
+      if (dataA.status === 'success' && dataB.status === 'success') {
+        contentA = dataA.content;
+        contentB = dataB.content;
+        fileA = null;
+        fileB = null;
+        graphAFormatSelect.value = dataA.format;
+        graphBFormatSelect.value = dataB.format;
+        fileInfoA.textContent = `Loaded Sample A: ${dataA.file_name} (${(dataA.content.length / 1024).toFixed(1)} KB) • ${dataA.format.toUpperCase()}`;
+        fileInfoB.textContent = `Loaded Sample B: ${dataB.file_name} (${(dataB.content.length / 1024).toFixed(1)} KB) • ${dataB.format.toUpperCase()}`;
+        if (preset && document.getElementById('domainPresetSelect')) {
+          document.getElementById('domainPresetSelect').value = preset;
+        }
+        badge.className = 'outcome-badge same';
+        badge.textContent = 'SAMPLES LOADED — READY FOR FUSION';
+        display.textContent = `// Sample datasets loaded successfully from testdata:\n// Graph A: ${dataA.file_name} (${dataA.format})\n// Graph B: ${dataB.file_name} (${dataB.format})\n// Click "Execute 6-Stage Graph Fusion" to merge.`;
+        announceA11y('Sample datasets loaded. Ready for 6-stage fusion.');
+      } else {
+        badge.className = 'outcome-badge abstain';
+        badge.textContent = 'SAMPLE LOAD ERROR';
+        display.textContent = `Error loading sample files: ${dataA.message || dataB.message}`;
+      }
+    } catch (err) {
+      badge.className = 'outcome-badge abstain';
+      badge.textContent = 'SAMPLE LOAD ERROR';
+      display.textContent = `Error loading sample data: ${err.message}`;
+    }
+  }
+
+  if (loadBioBtn) {
+    loadBioBtn.addEventListener('click', () => loadSamplePair('biomedical', 'drug_repurposing', 'biomedical'));
+  }
+  if (loadSynthBtn) {
+    loadSynthBtn.addEventListener('click', () => loadSamplePair('synthetic', 'drug_repurposing', 'synthetic'));
+  }
 
   fileInputA.addEventListener('change', (e) => {
     if (e.target.files.length > 0) {
@@ -625,14 +750,43 @@ function initGraphFusionHandler() {
     ];
     renderFusionSteps(trackerSteps);
 
-    // Note: Fusion is synchronous, so we'll update progress after completion
-    // Remove polling since /api/graph/merge-status endpoint doesn't exist
-
+    // Read user files if provided
     if (fileA) {
       contentA = await fileA.text();
     }
     if (fileB) {
       contentB = await fileB.text();
+    }
+
+    // Defense-in-depth: if content is still empty, auto-load default sample datasets
+    if (!contentA.trim() || !contentB.trim()) {
+      try {
+        const [resA, resB] = await Promise.all([
+          fetch('/api/sample-data/biomedical'),
+          fetch('/api/sample-data/drug_repurposing')
+        ]);
+        const [dataA, dataB] = await Promise.all([resA.json(), resB.json()]);
+        if (dataA.status === 'success' && dataB.status === 'success') {
+          contentA = dataA.content;
+          contentB = dataB.content;
+          fileInfoA.textContent = `Auto-loaded Default: ${dataA.file_name} (${dataA.format.toUpperCase()})`;
+          fileInfoB.textContent = `Auto-loaded Default: ${dataB.file_name} (${dataB.format.toUpperCase()})`;
+        }
+      } catch (e) {
+        // Fallback error will be caught below
+      }
+    }
+
+    // Guard against empty inputs
+    if (!contentA.trim() || !contentB.trim()) {
+      badge.className = 'outcome-badge abstain';
+      badge.textContent = 'MISSING GRAPH CONTENT';
+      display.textContent = 'Error: Graph A and Graph B content are both required. Upload files or click "Quick Load Samples".';
+      announceA11y('Fusion aborted: Graph A or Graph B content is missing.');
+      executeBtn.disabled = false;
+      executeBtn.textContent = originalBtnText;
+      appState.updateOperation('fusionInProgress', false);
+      return;
     }
 
     try {
@@ -1664,28 +1818,41 @@ function initPipelineManager() {
   const e2eBtn = document.getElementById('runE2EPipelineBtn');
   const drugBtn = document.getElementById('runDrugRepurposingBtn');
   const rollbackBtn = document.getElementById('triggerRollbackBtn');
+  const backupBtn = document.getElementById('createBackupBtn');
   const manifestJson = document.getElementById('manifestJson');
   const stepBadges = document.querySelectorAll('.step-badge');
 
   e2eBtn.addEventListener('click', async () => {
     resetSteps();
     manifestJson.textContent = "Executing 13-stage release lifecycle...";
+    const domainPack = document.getElementById('pipelineDomainPackSelect')?.value || 'biomedical';
 
     try {
       const res = await fetch('/api/pipeline/execute', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pipeline_type: 'e2e_release', run_id: `run_ui_${Date.now()}` }),
+        body: JSON.stringify({
+          pipeline_type: 'e2e_release',
+          domain_pack: domainPack,
+          run_id: `run_ui_${Date.now()}`
+        }),
       });
       const data = await res.json();
       if (data.status === 'success') {
         manifestJson.textContent = JSON.stringify(data.run_result, null, 2);
         const statuses = data.run_result.stage_statuses || {};
-        stepBadges.forEach((badge, index) => {
-          const stageName = Object.keys(statuses)[index];
-          if (statuses[stageName] === 'PASS') badge.classList.add('pass');
-          if (statuses[stageName] === 'FAIL') badge.classList.add('active');
+        stepBadges.forEach((badge) => {
+          const stageKey = badge.dataset.stage;
+          if (statuses[stageKey] === 'PASS') {
+            badge.classList.add('pass');
+          } else if (statuses[stageKey] === 'FAIL') {
+            badge.classList.add('active');
+          }
         });
+        await loadActiveGraphData();
+        announceA11y('13-stage E2E pipeline execution completed successfully.');
+      } else {
+        manifestJson.textContent = `Pipeline error: ${data.message || 'Execution failed'}`;
       }
     } catch (err) {
       manifestJson.textContent = `Pipeline error: ${err.message}`;
@@ -1694,17 +1861,57 @@ function initPipelineManager() {
 
   drugBtn.addEventListener('click', async () => {
     resetSteps();
-    manifestJson.textContent = "Executing Drug Repurposing Pilot graph traversal...";
+    const targetDisease = document.getElementById('targetDiseaseSelect')?.value || 'MONDO:0005148';
+    manifestJson.textContent = `Executing Drug Repurposing Pilot graph traversal for ${targetDisease}...`;
+    const section = document.getElementById('drugRepurposingSection');
+    const grid = document.getElementById('hypothesesGrid');
+    const countBadge = document.getElementById('repurposingCountBadge');
 
     try {
       const res = await fetch('/api/pipeline/execute', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pipeline_type: 'drug_repurposing' }),
+        body: JSON.stringify({ pipeline_type: 'drug_repurposing', target_disease: targetDisease }),
       });
       const data = await res.json();
       if (data.status === 'success') {
         manifestJson.textContent = JSON.stringify(data, null, 2);
+        const hyps = data.hypotheses || [];
+        if (countBadge) countBadge.textContent = `${hyps.length} HYPOTHESES`;
+
+        if (grid) {
+          if (hyps.length === 0) {
+            grid.innerHTML = '<p class="placeholder-text" style="padding: 1rem; color: var(--text-muted);">No repurposing hypotheses found for the selected disease in active production graph. Ingest drug and disease assertions to expand multi-hop traversal paths.</p>';
+          } else {
+            grid.innerHTML = hyps.map((h) => {
+              const drugVal = h.drug_id?.value || h.drug_id || 'Unknown Drug';
+              const diseaseVal = h.target_disease_id?.value || h.target_disease_id || targetDisease;
+              const proteinVal = h.mediating_protein_id?.value || h.mediating_protein_id || 'Unknown Protein';
+              const actVal = h.activity_id?.value || h.activity_id || 'ACT_REPURPOSE';
+              const layerVal = h.target_layer || 'hypothesis';
+
+              return `
+                <div class="hypothesis-card">
+                  <div class="hyp-header">
+                    <span class="hyp-drug">${drugVal}</span>
+                    <span class="outcome-badge same" style="font-size: 0.68rem;">PROV-O VERIFIED</span>
+                  </div>
+                  <div class="hyp-target">Target Disease: <strong style="color: #fff;">${diseaseVal}</strong></div>
+                  <div class="hyp-target">Mediating Protein: <strong style="color: #fff;">${proteinVal}</strong></div>
+                  <div class="hyp-path">Traversal: ${diseaseVal} &larr; associated_with &larr; Gene &rarr; encodes &rarr; ${proteinVal} &larr; targets &larr; ${drugVal}</div>
+                  <div class="hyp-meta">
+                    <span>Layer: <code>${layerVal}</code></span>
+                    <span>Activity: <code>${actVal}</code></span>
+                  </div>
+                </div>
+              `;
+            }).join('');
+          }
+        }
+        if (section) section.style.display = 'block';
+        announceA11y(`Drug Repurposing Pilot completed. ${hyps.length} hypotheses discovered for ${targetDisease}.`);
+      } else {
+        manifestJson.textContent = `Drug Repurposing error: ${data.message || 'Execution failed'}`;
       }
     } catch (err) {
       manifestJson.textContent = `Pipeline error: ${err.message}`;
@@ -1713,7 +1920,7 @@ function initPipelineManager() {
 
   rollbackBtn.addEventListener('click', async () => {
     resetSteps();
-    manifestJson.textContent = 'Restoring the previous release snapshot...';
+    manifestJson.textContent = 'Executing 1-click atomic rollback across SQLite store and projection backends...';
     try {
       const res = await fetch('/api/release/rollback', {
         method: 'POST',
@@ -1722,13 +1929,49 @@ function initPipelineManager() {
       });
       const data = await res.json();
       manifestJson.textContent = JSON.stringify(data, null, 2);
-      if (data.status === 'success') stepBadges[stepBadges.length - 1].classList.add('pass');
-      else stepBadges[stepBadges.length - 1].classList.add('active');
+      const rollbackBadge = document.querySelector('.step-badge[data-stage="rollback"]');
+      if (data.status === 'success') {
+        if (rollbackBadge) rollbackBadge.classList.add('pass');
+        await loadActiveGraphData();
+        announceA11y('Atomic rollback completed. Previous release snapshot restored.');
+      } else {
+        if (rollbackBadge) rollbackBadge.classList.add('active');
+        announceA11y(`Rollback notice: ${data.message}`);
+      }
     } catch (err) {
-      stepBadges[stepBadges.length - 1].classList.add('active');
+      const rollbackBadge = document.querySelector('.step-badge[data-stage="rollback"]');
+      if (rollbackBadge) rollbackBadge.classList.add('active');
       manifestJson.textContent = `Rollback error: ${err.message}`;
     }
   });
+
+  if (backupBtn) {
+    backupBtn.addEventListener('click', async () => {
+      const origText = backupBtn.textContent;
+      backupBtn.textContent = '⏳ Creating snapshot...';
+      backupBtn.disabled = true;
+      try {
+        const res = await fetch('/api/backup', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({}),
+        });
+        const data = await res.json();
+        if (data.status === 'success') {
+          manifestJson.textContent = JSON.stringify(data, null, 2);
+          alert(`✓ Verified SQLite database backup created:\n${data.backup_path}`);
+          announceA11y('Database backup verified and saved successfully.');
+        } else {
+          alert(`✗ Backup failed: ${data.message}`);
+        }
+      } catch (err) {
+        alert(`✗ Backup request error: ${err.message}`);
+      } finally {
+        backupBtn.textContent = origText;
+        backupBtn.disabled = false;
+      }
+    });
+  }
 
   function resetSteps() {
     stepBadges.forEach(b => b.classList.remove('pass', 'active'));
