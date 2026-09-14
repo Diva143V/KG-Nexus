@@ -2275,3 +2275,81 @@ body {
   }
 }
 
+/* ==========================================================================
+   Drug Repurposing Hypotheses & Live Status Styles
+   ========================================================================== */
+
+.sample-load-bar button {
+  transition: all 0.2s ease;
+}
+
+.sample-load-bar button:hover {
+  border-color: var(--primary-orange) !important;
+  color: #fff !important;
+  transform: translateY(-1px);
+}
+
+.hypotheses-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: 1rem;
+}
+
+.hypothesis-card {
+  background: var(--bg-panel);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 1rem;
+  transition: all 0.2s ease;
+  position: relative;
+  overflow: hidden;
+}
+
+.hypothesis-card:hover {
+  border-color: var(--primary-orange);
+  box-shadow: 0 4px 16px rgba(255, 107, 0, 0.15);
+}
+
+.hypothesis-card .hyp-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.75rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  padding-bottom: 0.5rem;
+}
+
+.hypothesis-card .hyp-drug {
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--primary-orange);
+  font-family: var(--font-mono);
+}
+
+.hypothesis-card .hyp-target {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  margin-bottom: 0.5rem;
+}
+
+.hypothesis-card .hyp-path {
+  background: var(--bg-input);
+  padding: 0.5rem;
+  border-radius: 6px;
+  font-family: var(--font-mono);
+  font-size: 0.76rem;
+  color: #fb923c;
+  line-height: 1.5;
+  margin-bottom: 0.75rem;
+  word-break: break-all;
+}
+
+.hypothesis-card .hyp-meta {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.74rem;
+  color: var(--text-muted);
+}
+
+
+
