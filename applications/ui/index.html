@@ -31,8 +31,11 @@
             <option value="">Detecting models...</option>
           </select>
         </div>
-        <div class="status-badge active-status">
-          <span class="badge-dot"></span> System Ready
+        <div class="status-badge" id="systemHealthBadge" title="System Storage Engine">
+          <span class="badge-dot" id="systemHealthDot"></span> <span id="systemHealthText">Storage: SQLite</span>
+        </div>
+        <div class="status-badge" id="embeddingsBadge" title="Embedding Provider Status" style="background: rgba(255, 107, 0, 0.12); border-color: rgba(255, 107, 0, 0.3);">
+          <span style="color: var(--primary-orange); font-size: 0.76rem;" id="embeddingsText">Embeddings: Pluggable</span>
         </div>
       </div>
     </header>
@@ -149,7 +152,13 @@
       <div class="section-grid">
         <div class="card fusion-input-card">
           <h2>Domain-Agnostic Knowledge Graph Fusion</h2>
-          <p class="subtitle">Upload two Knowledge Graphs (Graph A & Graph B) to merge them into a new, validated release snapshot with full provenance tracing.</p>
+          <p class="subtitle">Upload two Knowledge Graphs (Graph A & Graph B) or use pre-loaded sample datasets to merge them into a new, validated release snapshot with full provenance tracing.</p>
+
+          <div class="sample-load-bar" style="margin: 0.75rem 0 1rem 0; display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center;">
+            <span style="font-size: 0.8rem; color: var(--text-muted); font-weight: 600;">Quick Load Samples:</span>
+            <button type="button" id="loadBiomedicalSampleBtn" class="btn btn-secondary" style="padding: 0.35rem 0.75rem; font-size: 0.78rem;">🧬 Load Biomedical Samples (TTL + CSV)</button>
+            <button type="button" id="loadSyntheticSampleBtn" class="btn btn-secondary" style="padding: 0.35rem 0.75rem; font-size: 0.78rem;">🏢 Load Synthetic Samples (JSON-LD + CSV)</button>
+          </div>
 
           <div class="form-row">
             <!-- Graph A Upload Box -->
@@ -610,10 +619,44 @@
           <div class="step-badge" data-stage="rollback">13. Rollback</div>
         </div>
 
-        <div class="action-bar">
+        <div class="pipeline-controls-panel" style="margin: 1.25rem 0; padding: 1rem; background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 8px;">
+          <h3 style="font-size: 0.95rem; margin-top: 0; margin-bottom: 0.75rem; color: var(--text-primary);">Pipeline Execution & Target Disease Configuration</h3>
+          <div class="form-row" style="margin-bottom: 0.5rem;">
+            <div class="form-group" style="margin-bottom: 0;">
+              <label for="targetDiseaseSelect" style="font-size: 0.8rem;">Target Disease for Repurposing Traversal</label>
+              <select id="targetDiseaseSelect" class="input-field" style="padding: 0.45rem 0.6rem; font-size: 0.85rem;">
+                <option value="MONDO:0005148">Type 2 Diabetes Mellitus (MONDO:0005148)</option>
+                <option value="MONDO:0005267">EGFR Malignancy / Lung Neoplasm (MONDO:0005267)</option>
+              </select>
+            </div>
+            <div class="form-group" style="margin-bottom: 0;">
+              <label for="pipelineDomainPackSelect" style="font-size: 0.8rem;">Domain Pack</label>
+              <select id="pipelineDomainPackSelect" class="input-field" style="padding: 0.45rem 0.6rem; font-size: 0.85rem;">
+                <option value="biomedical">Biomedical Pack</option>
+                <option value="synthetic">Synthetic Pack</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <div class="action-bar" style="display: flex; gap: 0.75rem; flex-wrap: wrap; margin-bottom: 1.5rem;">
           <button id="runE2EPipelineBtn" class="btn btn-primary">Run 13-Stage E2E Release</button>
-          <button id="runDrugRepurposingBtn" class="btn btn-secondary">Run Drug Repurposing Pilot</button>
-          <button id="triggerRollbackBtn" class="btn btn-danger">Simulate 1-Click Rollback</button>
+          <button id="runDrugRepurposingBtn" class="btn btn-secondary">💊 Run Drug Repurposing Pilot</button>
+          <button id="triggerRollbackBtn" class="btn btn-danger">↺ Execute 1-Click Atomic Rollback</button>
+          <button id="createBackupBtn" class="btn btn-secondary" style="border-color: #ffaa00; color: #ffaa00;">💾 Snapshot SQLite Database</button>
+        </div>
+
+        <!-- Dedicated Drug Repurposing Hypotheses Cockpit -->
+        <div id="drugRepurposingSection" class="card" style="display: none; margin-bottom: 1.5rem; background: var(--bg-card); border: 1px solid rgba(255, 107, 0, 0.4);">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
+            <h3 style="margin: 0; color: var(--primary-orange); font-size: 1.05rem;">💊 Discovered Drug Repurposing Hypotheses</h3>
+            <span id="repurposingCountBadge" class="outcome-badge same" style="font-size: 0.75rem;">0 HYPOTHESES</span>
+          </div>
+          <p style="font-size: 0.82rem; color: var(--text-muted); margin-bottom: 1rem;">
+            Hypotheses derived across production assertions via multi-hop traversal:
+            <code>Disease &larr; associated_with &larr; Gene &rarr; encodes &rarr; Protein &larr; targets &larr; Drug</code>.
+          </p>
+          <div id="hypothesesGrid" class="hypotheses-grid" style="display: grid; gap: 0.75rem;"></div>
         </div>
 
         <div class="execution-manifest-box" id="manifestOutput">
