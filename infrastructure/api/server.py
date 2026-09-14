@@ -19,6 +19,7 @@ import importlib
 import json
 import os
 import subprocess
+import sys
 import urllib.parse
 import urllib.request
 from datetime import UTC, datetime
@@ -55,8 +56,12 @@ from infrastructure.storage import (
     verify_backup,
 )
 
-UI_DIR = Path(__file__).resolve().parent.parent.parent / "applications" / "ui"
-TESTDATA_DIR = Path(__file__).resolve().parent.parent.parent / "testdata"
+ROOT_DIR = Path(__file__).resolve().parent.parent.parent
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
+UI_DIR = ROOT_DIR / "applications" / "ui"
+TESTDATA_DIR = ROOT_DIR / "testdata"
 MAX_REQUEST_BYTES = int(os.getenv("HYBRID_KG_MAX_REQUEST_BYTES", str(10 * 1024 * 1024)))
 CORS_ORIGIN = os.getenv("HYBRID_KG_CORS_ORIGIN", "http://127.0.0.1:8000")
 
@@ -1034,6 +1039,8 @@ class PlatformRequestHandler(BaseHTTPRequestHandler):
                 self._send_json(
                     {"status": "error", "message": f"Pipeline execution error: {exc}"}, status=400
                 )
+            return
+
         if path == "/api/backup":
             try:
                 backup_dir_str = data.get("backup_dir", "backups")

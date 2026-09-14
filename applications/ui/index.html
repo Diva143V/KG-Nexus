@@ -3,6 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Hybrid Knowledge Graph Platform - ingest, fuse, explore, verify, and release multi-source knowledge graphs with full provenance tracing.">
+  <meta name="theme-color" content="#09090b">
   <title>Hybrid Knowledge Graph Platform</title>
   <link rel="stylesheet" href="styles.css">
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -11,6 +13,10 @@
   <script type="text/javascript" src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
 </head>
 <body>
+  <a class="skip-link" href="#mainContent">Skip to main content</a>
+  <noscript>
+    <p class="noscript-warning">JavaScript is required for this platform. Enable JavaScript and reload to ingest, fuse, and explore knowledge graphs.</p>
+  </noscript>
   <div class="app-container">
     <!-- Top Header Bar -->
     <header class="top-header">
@@ -18,719 +24,733 @@
         <div class="brand-icon">KG</div>
         <div class="brand-text">
           <h1>Hybrid Knowledge Graph Platform</h1>
-          <span class="version-tag">v1.0 • Pragmatic Lean Engine</span>
+          <p class="subtitle">Deterministic 3-Layer Graph Fusion &amp; Provenance Engine <span class="version-tag">v1.0 &bull; Pragmatic Lean Engine</span></p>
         </div>
       </div>
 
       <div class="header-controls">
         <div class="ollama-selector-container">
           <label for="ollamaModelSelect" class="selector-label">
-            <span class="pulse-dot"></span> Ollama Model:
+            <span class="pulse-dot" aria-hidden="true"></span> Ollama Model:
           </label>
           <select id="ollamaModelSelect" class="ollama-select">
             <option value="">Detecting models...</option>
           </select>
         </div>
         <div class="status-badge" id="systemHealthBadge" title="System Storage Engine">
-          <span class="badge-dot" id="systemHealthDot"></span> <span id="systemHealthText">Storage: SQLite</span>
+          <span class="badge-dot" id="systemHealthDot" aria-hidden="true"></span> <span id="systemHealthText">Storage: SQLite</span>
         </div>
-        <div class="status-badge" id="embeddingsBadge" title="Embedding Provider Status" style="background: rgba(255, 107, 0, 0.12); border-color: rgba(255, 107, 0, 0.3);">
-          <span style="color: var(--primary-orange); font-size: 0.76rem;" id="embeddingsText">Embeddings: Pluggable</span>
+        <div class="status-badge embeddings-badge" id="embeddingsBadge" title="Embedding Provider Status">
+          <span class="embeddings-text" id="embeddingsText">Embeddings: Pluggable</span>
         </div>
       </div>
     </header>
 
     <!-- Interactive Sticky Workflow Breadcrumb -->
-    <div class="workflow-breadcrumb" id="workflowBreadcrumb">
-      <span class="step step-1 active" data-tab="uploadTab">
-        <span class="step-icon">📤</span> 1. Ingestion
-      </span>
-      <span class="step-separator">&rarr;</span>
-      <span class="step step-2" data-tab="fusionTab">
-        <span class="step-icon">🔀</span> 2. 6-Stage Fusion
-      </span>
-      <span class="step-separator">&rarr;</span>
-      <span class="step step-3" data-tab="explorerTab">
-        <span class="step-icon">🕸️</span> 3. Graph Explorer
-      </span>
-      <span class="step-separator">&rarr;</span>
-      <span class="step step-4" data-tab="alignmentTab">
-        <span class="step-icon">🧬</span> 4. 8B Alignment
-      </span>
-      <span class="step-separator">&rarr;</span>
-      <span class="step step-5" data-tab="pipelineTab">
-        <span class="step-icon">⚡</span> 5. 13-Stage Release
-      </span>
-      <span class="step-separator">&rarr;</span>
-      <span class="step step-6" data-tab="analyticsTab">
-        <span class="step-icon">📊</span> 6. Quality Benchmarks
-      </span>
-    </div>
+    <nav class="workflow-breadcrumb" id="workflowBreadcrumb" aria-label="Workflow progress">
+      <button type="button" class="step step-1 active" data-tab="uploadTab">
+        <span class="step-num">1.</span> Ingestion
+      </button>
+      <span class="step-separator" aria-hidden="true">&rarr;</span>
+      <button type="button" class="step step-2" data-tab="fusionTab">
+        <span class="step-num">2.</span> 6-Stage Fusion
+      </button>
+      <span class="step-separator" aria-hidden="true">&rarr;</span>
+      <button type="button" class="step step-3" data-tab="explorerTab">
+        <span class="step-num">3.</span> Graph Explorer
+      </button>
+      <span class="step-separator" aria-hidden="true">&rarr;</span>
+      <button type="button" class="step step-4" data-tab="alignmentTab">
+        <span class="step-num">4.</span> 8B Alignment
+      </button>
+      <span class="step-separator" aria-hidden="true">&rarr;</span>
+      <button type="button" class="step step-5" data-tab="pipelineTab">
+        <span class="step-num">5.</span> 13-Stage Release
+      </button>
+      <span class="step-separator" aria-hidden="true">&rarr;</span>
+      <button type="button" class="step step-6" data-tab="analyticsTab">
+        <span class="step-num">6.</span> Quality Benchmarks
+      </button>
+    </nav>
 
     <!-- Contextual Release Banner (Spanning Tabs) -->
-    <div class="workflow-context-banner" id="workflowContextBanner" style="display: none;">
+    <div class="workflow-context-banner" id="workflowContextBanner" role="status" style="display: none;">
       <div class="context-left">
-        <h3 id="contextBannerTitle">🔀 Active Fused Release: <span id="contextBannerRelease" style="font-family: var(--font-mono); font-weight: 800;">None</span></h3>
+        <h2 id="contextBannerTitle">Active Fused Release: <span id="contextBannerRelease" class="release-id">None</span></h2>
         <p id="contextBannerStats">0 entities merged | 0 edges deduplicated | 0 conflicts flagged</p>
       </div>
       <div class="context-actions">
-        <button class="quick-link" id="contextViewExplorerBtn">👁️ View in Explorer</button>
-        <button class="quick-link" id="contextReviewAlignmentBtn">🧬 Review Alignment</button>
-        <button class="quick-link" id="contextDownloadReleaseBtn">📥 Download Release</button>
+        <button type="button" class="quick-link" id="contextViewExplorerBtn">View in Explorer</button>
+        <button type="button" class="quick-link" id="contextReviewAlignmentBtn">Review Alignment</button>
+        <button type="button" class="quick-link" id="contextDownloadReleaseBtn">Download Release</button>
       </div>
     </div>
 
     <!-- Navigation Tabs -->
-    <nav class="nav-tabs">
-      <button class="nav-btn active" data-tab="uploadTab">
-        <span class="icon">📤</span> Upload & Ingestion
+    <nav class="nav-tabs" role="tablist" aria-label="Workflow sections">
+      <button type="button" class="nav-btn active" id="tabBtn-uploadTab" role="tab" aria-selected="true" aria-controls="uploadTab" data-tab="uploadTab">
+        Upload &amp; Ingestion
       </button>
-      <button class="nav-btn" data-tab="fusionTab">
-        <span class="icon">🔀</span> Graph Fusion & Merge
+      <button type="button" class="nav-btn" id="tabBtn-fusionTab" role="tab" aria-selected="false" aria-controls="fusionTab" data-tab="fusionTab">
+        Graph Fusion &amp; Merge
       </button>
-      <button class="nav-btn" data-tab="explorerTab">
-        <span class="icon">🕸️</span> Graph Explorer & Query
+      <button type="button" class="nav-btn" id="tabBtn-explorerTab" role="tab" aria-selected="false" aria-controls="explorerTab" data-tab="explorerTab">
+        Graph Explorer &amp; Query
       </button>
-      <button class="nav-btn" data-tab="alignmentTab">
-        <span class="icon">🧬</span> Entity Alignment & 8B Verifier
+      <button type="button" class="nav-btn" id="tabBtn-alignmentTab" role="tab" aria-selected="false" aria-controls="alignmentTab" data-tab="alignmentTab">
+        Entity Alignment &amp; 8B Verifier
       </button>
-      <button class="nav-btn" data-tab="pipelineTab">
-        <span class="icon">⚡</span> 13-Stage Pipeline & Release
+      <button type="button" class="nav-btn" id="tabBtn-pipelineTab" role="tab" aria-selected="false" aria-controls="pipelineTab" data-tab="pipelineTab">
+        13-Stage Pipeline &amp; Release
       </button>
-      <button class="nav-btn" data-tab="analyticsTab">
-        <span class="icon">📊</span> Benchmarking & Quality
+      <button type="button" class="nav-btn" id="tabBtn-analyticsTab" role="tab" aria-selected="false" aria-controls="analyticsTab" data-tab="analyticsTab">
+        Benchmarking &amp; Quality
       </button>
     </nav>
 
-    <!-- Tab 1: Upload & Ingestion Studio -->
-    <main class="tab-content active" id="uploadTab">
-      <div class="section-grid">
-        <div class="card upload-card">
-          <h2>Upload Knowledge Graph Dataset</h2>
-          <p class="subtitle">Upload custom RDF/Turtle (.ttl), JSON / JSON-LD (.json, .jsonld), or CSV (.csv) datasets into authoritative RDF storage.</p>
-          
-          <div class="drop-zone" id="dropZone">
-            <div class="drop-icon">📁</div>
-            <p class="drop-text">Drag & drop graph file here, or <label for="fileInput" class="browse-link">browse</label></p>
-            <input type="file" id="fileInput" hidden accept=".ttl,.jsonld,.json,.csv,.txt">
-            <span class="file-info" id="fileInfo">Supported formats: Turtle (.ttl), JSON / JSON-LD (.json, .jsonld), CSV (.csv)</span>
+    <main id="mainContent">
+      <!-- Tab 1: Upload & Ingestion Studio -->
+      <section class="tab-content active" id="uploadTab" role="tabpanel" aria-labelledby="tabBtn-uploadTab" tabindex="0">
+        <div class="section-grid">
+          <div class="card upload-card">
+            <h2>Upload Knowledge Graph Dataset</h2>
+            <p class="subtitle">Upload custom RDF/Turtle (.ttl), JSON / JSON-LD (.json, .jsonld), or CSV (.csv) datasets into authoritative RDF storage.</p>
+
+            <div class="drop-zone" id="dropZone">
+              <div class="drop-icon" aria-hidden="true">
+                <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" style="color: var(--primary-orange);"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="12" y1="18" x2="12" y2="12"></line><line x1="9" y1="15" x2="12" y2="12"></line><line x1="15" y1="15" x2="12" y2="12"></line></svg>
+              </div>
+              <p class="drop-text">Drag &amp; drop graph file here, or <label for="fileInput" class="browse-link">browse</label></p>
+              <input type="file" id="fileInput" class="visually-hidden" accept=".ttl,.jsonld,.json,.csv,.txt" aria-describedby="fileInfo">
+              <span class="file-info" id="fileInfo" aria-live="polite">Supported formats: Turtle (.ttl), JSON / JSON-LD (.json, .jsonld), CSV (.csv)</span>
+            </div>
+
+            <div class="form-row">
+              <div class="form-group">
+                <label for="pluginPackSelect">Domain Plugin Pack</label>
+                <select id="pluginPackSelect" class="input-field">
+                  <option value="biomedical">Biomedical Domain Pack (HGNC, UniProt, ChEBI, MONDO)</option>
+                  <option value="synthetic">Synthetic Domain Pack (Person, Organization, LocatedIn)</option>
+                  <option value="custom">Custom Neutral Schema</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label for="formatSelect">Format Parser</label>
+                <select id="formatSelect" class="input-field">
+                  <option value="turtle">RDF / Turtle (.ttl)</option>
+                  <option value="jsonld">JSON / JSON-LD (.json, .jsonld)</option>
+                  <option value="csv">Tabular Triples CSV (.csv)</option>
+                </select>
+              </div>
+            </div>
+
+            <button type="button" id="uploadBtn" class="btn btn-primary">Process &amp; Parse Dataset</button>
           </div>
 
-          <div class="form-row">
+          <div class="card status-card">
+            <h2>Ingestion Activity Log</h2>
+            <div class="log-terminal" id="ingestTerminal" role="log" aria-label="Ingestion activity log">
+              <div class="log-line info">[System] Ready for ingestion. Select a file to parse into raw assertions.</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Tab 2: Domain-Agnostic Graph Fusion Studio -->
+      <section class="tab-content" id="fusionTab" role="tabpanel" aria-labelledby="tabBtn-fusionTab" tabindex="0">
+        <div class="section-grid">
+          <div class="card fusion-input-card">
+            <h2>Domain-Agnostic Knowledge Graph Fusion</h2>
+            <p class="subtitle">Upload two Knowledge Graphs (Graph A &amp; Graph B) or use pre-loaded sample datasets to merge them into a new, validated release snapshot with full provenance tracing.</p>
+
+            <div class="sample-load-bar">
+              <span class="sample-label">Quick Load Samples:</span>
+              <button type="button" id="loadBiomedicalSampleBtn" class="btn btn-secondary btn-chip">Load Biomedical Samples (TTL + CSV)</button>
+              <button type="button" id="loadSyntheticSampleBtn" class="btn btn-secondary btn-chip">Load Synthetic Samples (JSON-LD + CSV)</button>
+            </div>
+
+            <div class="form-row">
+              <!-- Graph A Upload Box -->
+              <div class="form-group">
+                <label for="fileInputA">Graph A File (First Graph)</label>
+                <div class="drop-zone mini-drop" id="dropZoneA">
+                  <p class="drop-text"><label for="fileInputA" class="browse-link">Upload Graph A</label></p>
+                  <input type="file" id="fileInputA" class="visually-hidden" accept=".ttl,.jsonld,.json,.csv,.txt" aria-describedby="fileInfoA">
+                  <span class="file-info" id="fileInfoA" aria-live="polite">Default: biomedical_sample_graph.ttl</span>
+                </div>
+                <label for="graphAFormat">Graph A Format</label>
+                <select id="graphAFormat" class="input-field">
+                  <option value="turtle">RDF / Turtle (.ttl)</option>
+                  <option value="jsonld">JSON / JSON-LD (.json, .jsonld)</option>
+                  <option value="csv">CSV (subject,predicate,object)</option>
+                </select>
+              </div>
+
+              <!-- Graph B Upload Box -->
+              <div class="form-group">
+                <label for="fileInputB">Graph B File (Second Graph)</label>
+                <div class="drop-zone mini-drop" id="dropZoneB">
+                  <p class="drop-text"><label for="fileInputB" class="browse-link">Upload Graph B</label></p>
+                  <input type="file" id="fileInputB" class="visually-hidden" accept=".ttl,.jsonld,.json,.csv,.txt" aria-describedby="fileInfoB">
+                  <span class="file-info" id="fileInfoB" aria-live="polite">Default: drug_repurposing_graph.csv</span>
+                </div>
+                <label for="graphBFormat">Graph B Format</label>
+                <select id="graphBFormat" class="input-field">
+                  <option value="csv">CSV (subject,predicate,object)</option>
+                  <option value="turtle">RDF / Turtle (.ttl)</option>
+                  <option value="jsonld">JSON / JSON-LD (.json, .jsonld)</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="form-row">
+              <div class="form-group">
+                <label for="domainPresetSelect">Domain Configuration / SDK Rules</label>
+                <select id="domainPresetSelect" class="input-field">
+                  <option value="general_agnostic">General Domain-Agnostic Preset (Conservative Defaults)</option>
+                  <option value="biomedical">Biomedical &amp; Life Sciences (HGNC, UniProt, ChEBI, MONDO)</option>
+                  <option value="synthetic">Enterprise &amp; Synthetic (Person, Company, Dept, Location)</option>
+                </select>
+              </div>
+              <div class="form-group form-group--full">
+                <div class="policy-header-row">
+                  <span id="conflictPolicyLabel" class="form-label">Conflict Resolution Policy</span>
+                  <button type="button" class="help-icon" id="openPolicyHelperBtn" title="Conflict Resolution Strategies Explained" aria-label="Conflict resolution strategies explained" aria-haspopup="dialog">?</button>
+                </div>
+                <span id="policyHint" class="policy-hint">Select handling strategy for contradictory assertions</span>
+
+                <!-- Hidden select kept in sync for programmatic compatibility -->
+                <select id="conflictModeSelect" class="input-field" style="display: none;">
+                  <option value="conflict_preserve" selected>CONFLICT_PRESERVE</option>
+                  <option value="conflict_reject">CONFLICT_REJECT</option>
+                  <option value="conflict_review">CONFLICT_REVIEW</option>
+                  <option value="conflict_policy_decision">CONFLICT_POLICY_DECISION</option>
+                </select>
+
+                <!-- Interactive Decision Cards -->
+                <div class="policy-selector" id="policyCardSelector" role="radiogroup" aria-labelledby="conflictPolicyLabel" aria-describedby="policyHint">
+                  <div class="policy-option">
+                    <input type="radio" id="preservePolicyRadio" name="conflictModeRadio" value="conflict_preserve" checked>
+                    <label for="preservePolicyRadio" class="policy-card">
+                      <h4>PRESERVE (Keep Both)</h4>
+                      <p class="description">Retains all contradictory assertions with distinct provenance records for downstream audit.</p>
+                      <table class="trade-off-table">
+                        <tbody>
+                          <tr>
+                            <td class="pro">Zero data loss</td>
+                            <td class="con">Larger dataset</td>
+                          </tr>
+                          <tr>
+                            <td class="pro">Full audit trail</td>
+                            <td class="con">Downstream triage</td>
+                          </tr>
+                        </tbody>
+                      </table>
+                      <p class="use-case"><strong>Use when:</strong> Researching competing scientific claims or maintaining clinical lineage.</p>
+                    </label>
+                  </div>
+
+                  <div class="policy-option">
+                    <input type="radio" id="rejectPolicyRadio" name="conflictModeRadio" value="conflict_reject">
+                    <label for="rejectPolicyRadio" class="policy-card">
+                      <h4>REJECT (Drop Conflicts)</h4>
+                      <p class="description">Discards contradictory duplicate assertions to ensure a strict, collision-free release graph.</p>
+                      <table class="trade-off-table">
+                        <tbody>
+                          <tr>
+                            <td class="pro">Clean release graph</td>
+                            <td class="con">Potential data loss</td>
+                          </tr>
+                          <tr>
+                            <td class="pro">Zero manual triage</td>
+                            <td class="con">Drops subtle disagreements</td>
+                          </tr>
+                        </tbody>
+                      </table>
+                      <p class="use-case"><strong>Use when:</strong> Ingesting reference canonical datasets with known authoritative schemas.</p>
+                    </label>
+                  </div>
+
+                  <div class="policy-option">
+                    <input type="radio" id="reviewPolicyRadio" name="conflictModeRadio" value="conflict_review">
+                    <label for="reviewPolicyRadio" class="policy-card">
+                      <h4>REVIEW (Quarantine)</h4>
+                      <p class="description">Retains conflicting claims in a quarantine queue for explicit human domain expert review.</p>
+                      <table class="trade-off-table">
+                        <tbody>
+                          <tr>
+                            <td class="pro">No automated loss</td>
+                            <td class="con">Requires expert time</td>
+                          </tr>
+                          <tr>
+                            <td class="pro">High release quality</td>
+                            <td class="con">Pauses auto-deployment</td>
+                          </tr>
+                        </tbody>
+                      </table>
+                      <p class="use-case"><strong>Use when:</strong> High-stakes clinical validations, gene curation, or enterprise drug repurposing.</p>
+                    </label>
+                  </div>
+                </div>
+
+                <!-- Dynamic Policy Feedback -->
+                <div class="policy-selected-feedback" id="policyFeedbackContainer">
+                  <p class="feedback-text">
+                    <span id="policyFeedback">PRESERVE policy selected: Retains all conflicting assertions with distinct provenance records for downstream audit.</span>
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <button type="button" id="executeFusionBtn" class="btn btn-primary fusion-execute">Execute 6-Stage Graph Fusion</button>
+          </div>
+
+          <div class="card fusion-summary-card">
+            <h2>6-Stage Pipeline Execution &amp; Manifest</h2>
+
+            <!-- 6-Stage Visual Stepper -->
+            <div class="fusion-stage-stepper" id="fusionStageStepper">
+              <div class="fusion-step" id="fstep1">
+                <span class="fstep-num">1</span>
+                <span class="fstep-label">Normalize</span>
+                <span class="fstep-metric" id="fstep1Metric">-</span>
+              </div>
+              <div class="fusion-step" id="fstep2">
+                <span class="fstep-num">2</span>
+                <span class="fstep-label">Candidates</span>
+                <span class="fstep-metric" id="fstep2Metric">-</span>
+              </div>
+              <div class="fusion-step" id="fstep3">
+                <span class="fstep-num">3</span>
+                <span class="fstep-label">Align Meaning</span>
+                <span class="fstep-metric" id="fstep3Metric">-</span>
+              </div>
+              <div class="fusion-step" id="fstep4">
+                <span class="fstep-num">4</span>
+                <span class="fstep-label">Confidence</span>
+                <span class="fstep-metric" id="fstep4Metric">-</span>
+              </div>
+              <div class="fusion-step" id="fstep5">
+                <span class="fstep-num">5</span>
+                <span class="fstep-label">Canonicalize</span>
+                <span class="fstep-metric" id="fstep5Metric">-</span>
+              </div>
+              <div class="fusion-step" id="fstep6">
+                <span class="fstep-num">6</span>
+                <span class="fstep-label">Provenance</span>
+                <span class="fstep-metric" id="fstep6Metric">-</span>
+              </div>
+            </div>
+
+            <!-- Real-Time Incremental Progress Step Tracker -->
+            <div class="progress-steps" id="fusionProgressTracker" style="display: none;"></div>
+
+            <div class="fusion-metrics-summary" id="fusionMetricsSummary">
+              <div class="result-display">
+                <div class="outcome-badge same" id="fusionBadge">READY FOR FUSION</div>
+                <pre class="json-box" id="fusionJsonDisplay">// Upload Graph A &amp; B, select domain preset, then click "Execute 6-Stage Graph Fusion"</pre>
+                <div class="fusion-download-bar">
+                  <button type="button" id="viewInExplorerBtn" class="btn btn-primary btn-explorer" disabled>View Graph in Explorer</button>
+                  <button type="button" id="downloadFusedJsonBtn" class="btn btn-secondary" disabled>Download Fused Release (.json)</button>
+                  <button type="button" id="downloadFusedCsvBtn" class="btn btn-secondary" disabled>Download Fused Triples (.csv)</button>
+                  <button type="button" id="downloadConflictReportBtn" class="btn btn-secondary" disabled>Download Conflict Audit Report (.json)</button>
+                  <button type="button" id="downloadFullAuditBtn" class="btn btn-secondary" disabled>Download 6-Stage Audit Trail (.json)</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Tab 3: Graph Explorer & Query Workbench -->
+      <section class="tab-content" id="explorerTab" role="tabpanel" aria-labelledby="tabBtn-explorerTab" tabindex="0">
+        <div class="explorer-layout">
+          <div class="card search-workbench-card">
+            <div class="query-bar-container">
+              <input type="text" id="graphQueryInput" class="query-input" placeholder="Query Knowledge Graph or ask Ollama LLM (e.g. 'Which drugs target Type 2 Diabetes?')..." aria-label="Query the knowledge graph or ask the Ollama model">
+              <button type="button" id="runQueryBtn" class="btn btn-primary">Execute Query</button>
+              <button type="button" id="clearQueryAndGraphBtn" class="btn btn-secondary" title="Clear Query &amp; Reset Canvas">Clear / Reset</button>
+            </div>
+
+            <div class="graph-viewport-wrapper">
+              <div id="visGraphNetwork" class="graph-network-container"></div>
+              <div class="graph-overlay-controls">
+                <button type="button" id="resetGraphView" class="btn-sm">Fit View</button>
+                <button type="button" id="clearGraphCanvasBtn" class="btn-sm btn-sm-danger">Clear Graph</button>
+                <button type="button" id="reloadActiveKgBtn" class="btn-sm">Reload Active KG</button>
+                <button type="button" id="layoutGraphView" class="btn-sm">Auto-Layout</button>
+                <button type="button" id="fullscreenGraphView" class="btn-sm">Fullscreen Popout</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="card inspector-card">
+            <h2>Entity &amp; Lineage Inspector</h2>
+            <div id="inspectorContent" class="inspector-details">
+              <p class="placeholder-text">Click on any node in the graph viewer to inspect canonical identity, provenance, and confidence score.</p>
+            </div>
+            <div class="llm-response-box" id="llmResponseBox" aria-live="polite">
+              <h3>Selected Ollama Model Insight</h3>
+              <div class="response-text" id="llmResponseText">No query executed yet. Run a query above to see model reasoning.</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Tab 4: Entity Alignment & 8B Verifier Cockpit -->
+      <section class="tab-content" id="alignmentTab" role="tabpanel" aria-labelledby="tabBtn-alignmentTab" tabindex="0">
+        <div class="section-grid">
+          <div class="card alignment-card">
+            <h2>Borderline Entity Match Verification</h2>
+            <p class="subtitle">Escalate borderline vector similarity candidates (0.70 &le; score &lt; 0.95) from active graph datasets to the local 8B model for bounded JSON verification.</p>
+
+            <!-- Candidate Selector Bar -->
             <div class="form-group">
-              <label>Domain Plugin Pack</label>
-              <select id="pluginPackSelect" class="input-field">
-                <option value="biomedical">Biomedical Domain Pack (HGNC, UniProt, ChEBI, MONDO)</option>
-                <option value="synthetic">Synthetic Domain Pack (Person, Organization, LocatedIn)</option>
-                <option value="custom">Custom Neutral Schema</option>
-              </select>
-            </div>
-            <div class="form-group">
-              <label>Format Parser</label>
-              <select id="formatSelect" class="input-field">
-                <option value="turtle">RDF / Turtle (.ttl)</option>
-                <option value="jsonld">JSON / JSON-LD (.json, .jsonld)</option>
-                <option value="csv">Tabular Triples CSV (.csv)</option>
-              </select>
-            </div>
-          </div>
-
-          <button id="uploadBtn" class="btn btn-primary">Process & Parse Dataset</button>
-        </div>
-
-        <div class="card status-card">
-          <h2>Ingestion Activity Log</h2>
-          <div class="log-terminal" id="ingestTerminal">
-            <div class="log-line info">[System] Ready for ingestion. Select a file to parse into raw assertions.</div>
-          </div>
-        </div>
-      </div>
-    </main>
-
-    <!-- Tab 2: Domain-Agnostic Graph Fusion Studio -->
-    <main class="tab-content" id="fusionTab">
-      <div class="section-grid">
-        <div class="card fusion-input-card">
-          <h2>Domain-Agnostic Knowledge Graph Fusion</h2>
-          <p class="subtitle">Upload two Knowledge Graphs (Graph A & Graph B) or use pre-loaded sample datasets to merge them into a new, validated release snapshot with full provenance tracing.</p>
-
-          <div class="sample-load-bar" style="margin: 0.75rem 0 1rem 0; display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center;">
-            <span style="font-size: 0.8rem; color: var(--text-muted); font-weight: 600;">Quick Load Samples:</span>
-            <button type="button" id="loadBiomedicalSampleBtn" class="btn btn-secondary" style="padding: 0.35rem 0.75rem; font-size: 0.78rem;">🧬 Load Biomedical Samples (TTL + CSV)</button>
-            <button type="button" id="loadSyntheticSampleBtn" class="btn btn-secondary" style="padding: 0.35rem 0.75rem; font-size: 0.78rem;">🏢 Load Synthetic Samples (JSON-LD + CSV)</button>
-          </div>
-
-          <div class="form-row">
-            <!-- Graph A Upload Box -->
-            <div class="form-group">
-              <label>Graph A File (First Graph)</label>
-              <div class="drop-zone mini-drop" id="dropZoneA">
-                <p class="drop-text"><label for="fileInputA" class="browse-link">Upload Graph A</label></p>
-                <input type="file" id="fileInputA" hidden accept=".ttl,.jsonld,.json,.csv,.txt">
-                <span class="file-info" id="fileInfoA">Default: biomedical_sample_graph.ttl</span>
+              <div class="policy-header-row">
+                <label for="sourceEntityInput" class="form-label" style="margin-bottom: 0;">Candidate Pair</label>
+                <button type="button" id="loadNextCandidateBtn" class="btn-sm btn-load-pair">Load Pair from Active Graph</button>
               </div>
-              <label style="margin-top: 0.5rem;">Graph A Format</label>
-              <select id="graphAFormat" class="input-field">
-                <option value="turtle">RDF / Turtle (.ttl)</option>
-                <option value="jsonld">JSON / JSON-LD (.json, .jsonld)</option>
-                <option value="csv">CSV (subject,predicate,object)</option>
-              </select>
-            </div>
-
-            <!-- Graph B Upload Box -->
-            <div class="form-group">
-              <label>Graph B File (Second Graph)</label>
-              <div class="drop-zone mini-drop" id="dropZoneB">
-                <p class="drop-text"><label for="fileInputB" class="browse-link">Upload Graph B</label></p>
-                <input type="file" id="fileInputB" hidden accept=".ttl,.jsonld,.json,.csv,.txt">
-                <span class="file-info" id="fileInfoB">Default: drug_repurposing_graph.csv</span>
+              <div class="pair-inputs">
+                <input type="text" id="sourceEntityInput" class="input-field" list="activeEntityList" placeholder="Source Entity (e.g. INS Gene)">
+                <span class="arrow-sep" aria-hidden="true">&harr;</span>
+                <input type="text" id="targetEntityInput" class="input-field" list="activeEntityList" placeholder="Target Candidate (e.g. Insulin Protein)" aria-label="Target candidate entity">
+                <datalist id="activeEntityList"></datalist>
               </div>
-              <label style="margin-top: 0.5rem;">Graph B Format</label>
-              <select id="graphBFormat" class="input-field">
-                <option value="csv">CSV (subject,predicate,object)</option>
-                <option value="turtle">RDF / Turtle (.ttl)</option>
-                <option value="jsonld">JSON / JSON-LD (.json, .jsonld)</option>
-              </select>
             </div>
-          </div>
 
-          <div class="form-row">
-            <div class="form-group">
-              <label>Domain Configuration / SDK Rules</label>
-              <select id="domainPresetSelect" class="input-field">
-                <option value="general_agnostic">General Domain-Agnostic Preset (Conservative Defaults)</option>
-                <option value="biomedical">Biomedical & Life Sciences (HGNC, UniProt, ChEBI, MONDO)</option>
-                <option value="synthetic">Enterprise & Synthetic (Person, Company, Dept, Location)</option>
-              </select>
-            </div>
-            <div class="form-group" style="grid-column: 1 / -1;">
-              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.4rem;">
-                <label style="margin-bottom: 0;">
-                  Conflict Resolution Policy
-                  <button type="button" class="help-icon" id="openPolicyHelperBtn" title="Conflict Resolution Strategies Explained">?</button>
-                </label>
-                <span style="font-size: 0.76rem; color: var(--text-muted);">Select handling strategy for contradictory assertions</span>
-              </div>
-
-              <!-- Hidden select kept in sync for programmatic compatibility -->
-              <select id="conflictModeSelect" class="input-field" style="display: none;">
-                <option value="conflict_preserve" selected>CONFLICT_PRESERVE</option>
-                <option value="conflict_reject">CONFLICT_REJECT</option>
-                <option value="conflict_review">CONFLICT_REVIEW</option>
-                <option value="conflict_policy_decision">CONFLICT_POLICY_DECISION</option>
-              </select>
-
-              <!-- Interactive Decision Cards -->
-              <div class="policy-selector" id="policyCardSelector">
-                <div class="policy-option">
-                  <input type="radio" id="preservePolicyRadio" name="conflictModeRadio" value="conflict_preserve" checked>
-                  <label for="preservePolicyRadio" class="policy-card">
-                    <h4>🔄 PRESERVE (Keep Both)</h4>
-                    <p class="description">Retains all contradictory assertions with distinct provenance records for downstream audit.</p>
-                    <table class="trade-off-table">
-                      <tr>
-                        <td class="pro">✓ Zero data loss</td>
-                        <td class="con">✗ Larger dataset</td>
-                      </tr>
-                      <tr>
-                        <td class="pro">✓ Full audit trail</td>
-                        <td class="con">✗ Downstream triage</td>
-                      </tr>
-                    </table>
-                    <p class="use-case"><strong>Use when:</strong> Researching competing scientific claims or maintaining clinical lineage.</p>
-                  </label>
+            <!-- Step 1: Candidate Context Card (Why this pair?) -->
+            <div class="candidate-context-card">
+              <h3>Candidate Matching Signals</h3>
+              <div class="matching-signals">
+                <div class="signal">
+                  <span class="signal-type">Name Overlap</span>
+                  <span class="signal-detail" id="signalNameDetail">Select Entities &harr; To Compare</span>
                 </div>
-
-                <div class="policy-option">
-                  <input type="radio" id="rejectPolicyRadio" name="conflictModeRadio" value="conflict_reject">
-                  <label for="rejectPolicyRadio" class="policy-card">
-                    <h4>❌ REJECT (Drop Conflicts)</h4>
-                    <p class="description">Discards contradictory duplicate assertions to ensure a strict, collision-free release graph.</p>
-                    <table class="trade-off-table">
-                      <tr>
-                        <td class="pro">✓ Clean release graph</td>
-                        <td class="con">✗ Potential data loss</td>
-                      </tr>
-                      <tr>
-                        <td class="pro">✓ Zero manual triage</td>
-                        <td class="con">✗ Drops subtle disagreements</td>
-                      </tr>
-                    </table>
-                    <p class="use-case"><strong>Use when:</strong> Ingesting reference canonical datasets with known authoritative schemas.</p>
-                  </label>
+                <div class="signal">
+                  <span class="signal-type">Shared Relations</span>
+                  <span class="signal-detail" id="signalRelDetail">Graph Connectivity</span>
                 </div>
+                <div class="signal">
+                  <span class="signal-type">Attribute Overlap</span>
+                  <span class="signal-detail" id="signalAttrDetail">Domain Rules Validation</span>
+                </div>
+              </div>
+              <div class="initial-score">
+                <span>Vector Similarity (Pre-verification):</span>
+                <div class="score-meter" role="meter" aria-labelledby="preVerifyScore" aria-valuemin="0" aria-valuemax="1" aria-valuenow="0.88">
+                  <div class="meter-fill" id="meterFill" style="width: 88%;"></div>
+                </div>
+                <span id="preVerifyScore" class="mono-accent">0.88</span>
+              </div>
+            </div>
 
-                <div class="policy-option">
-                  <input type="radio" id="reviewPolicyRadio" name="conflictModeRadio" value="conflict_review">
-                  <label for="reviewPolicyRadio" class="policy-card">
-                    <h4>👁️ REVIEW (Quarantine)</h4>
-                    <p class="description">Retains conflicting claims in a quarantine queue for explicit human domain expert review.</p>
-                    <table class="trade-off-table">
-                      <tr>
-                        <td class="pro">✓ No automated loss</td>
-                        <td class="con">✗ Requires expert time</td>
-                      </tr>
-                      <tr>
-                        <td class="pro">✓ High release quality</td>
-                        <td class="con">✗ Pauses auto-deployment</td>
-                      </tr>
-                    </table>
-                    <p class="use-case"><strong>Use when:</strong> High-stakes clinical validations, gene curation, or enterprise drug repurposing.</p>
-                  </label>
+            <!-- Step 2: Side-by-Side Entity Comparison Panels -->
+            <div class="entity-comparison">
+              <div class="entity-panel">
+                <h4>Source Entity (Graph A)</h4>
+                <div class="entity-details">
+                  <div class="detail-row">
+                    <span class="key">Label:</span>
+                    <span class="value" id="srcLabel">--</span>
+                  </div>
+                  <div class="detail-row">
+                    <span class="key">Type:</span>
+                    <span class="value" id="srcType">Select entity</span>
+                  </div>
+                  <div class="detail-row">
+                    <span class="key">ID:</span>
+                    <span class="value" id="srcId">--</span>
+                  </div>
+                  <div class="detail-row">
+                    <span class="key">Connections:</span>
+                    <span class="value" id="srcRels">
+                      <span class="rel-count" id="srcRelCount">0 edges</span>
+                      <button type="button" class="expand-rels" id="expandSrcRelsBtn" onclick="toggleRelationships('src')">Show Details</button>
+                    </span>
+                  </div>
+                  <div class="relationships-expanded" id="srcRelsExpanded" style="display: none;">
+                    <div class="relationship" id="srcRel1">Select entity to inspect relationships</div>
+                  </div>
                 </div>
               </div>
 
-              <!-- Dynamic Policy Feedback -->
-              <div class="policy-selected-feedback" id="policyFeedbackContainer">
-                <p class="feedback-text">
-                  <span id="policyFeedback">✓ PRESERVE policy selected: Retains all conflicting assertions with distinct provenance records for downstream audit.</span>
-                </p>
+              <div class="comparison-arrow">
+                <span class="arrow-label">Same Entity?</span>
+                <span class="arrow-glyph" aria-hidden="true">&harr;</span>
               </div>
-            </div>
-          </div>
 
-          <button id="executeFusionBtn" class="btn btn-primary" style="margin-top: 1rem;">Execute 6-Stage Graph Fusion</button>
-        </div>
-
-        <div class="card fusion-summary-card">
-          <h2>6-Stage Pipeline Execution & Manifest</h2>
-
-          <!-- 6-Stage Visual Stepper -->
-          <div class="fusion-stage-stepper" id="fusionStageStepper">
-            <div class="fusion-step" id="fstep1">
-              <span class="fstep-num">1</span>
-              <span class="fstep-label">Normalize</span>
-              <span class="fstep-metric" id="fstep1Metric">-</span>
-            </div>
-            <div class="fusion-step" id="fstep2">
-              <span class="fstep-num">2</span>
-              <span class="fstep-label">Candidates</span>
-              <span class="fstep-metric" id="fstep2Metric">-</span>
-            </div>
-            <div class="fusion-step" id="fstep3">
-              <span class="fstep-num">3</span>
-              <span class="fstep-label">Align Meaning</span>
-              <span class="fstep-metric" id="fstep3Metric">-</span>
-            </div>
-            <div class="fusion-step" id="fstep4">
-              <span class="fstep-num">4</span>
-              <span class="fstep-label">Confidence</span>
-              <span class="fstep-metric" id="fstep4Metric">-</span>
-            </div>
-            <div class="fusion-step" id="fstep5">
-              <span class="fstep-num">5</span>
-              <span class="fstep-label">Canonicalize</span>
-              <span class="fstep-metric" id="fstep5Metric">-</span>
-            </div>
-            <div class="fusion-step" id="fstep6">
-              <span class="fstep-num">6</span>
-              <span class="fstep-label">Provenance</span>
-              <span class="fstep-metric" id="fstep6Metric">-</span>
-            </div>
-          </div>
-
-          <!-- Real-Time Incremental Progress Step Tracker -->
-          <div class="progress-steps" id="fusionProgressTracker" style="display: none;"></div>
-
-          <div class="fusion-metrics-summary" id="fusionMetricsSummary">
-            <div class="result-display">
-              <div class="outcome-badge same" id="fusionBadge">READY FOR FUSION</div>
-              <pre class="json-box" id="fusionJsonDisplay">// Upload Graph A & B, select domain preset, then click "Execute 6-Stage Graph Fusion"</pre>
-              <div style="margin-top: 1rem; display: flex; gap: 0.5rem; flex-wrap: wrap;">
-                <button id="viewInExplorerBtn" class="btn btn-primary" style="background: linear-gradient(135deg, #ff6b00, #ff8533); color: #fff; font-weight: 700;" disabled>👁️ View Graph in Explorer</button>
-                <button id="downloadFusedJsonBtn" class="btn btn-secondary" disabled>📥 Download Fused Release (.json)</button>
-                <button id="downloadFusedCsvBtn" class="btn btn-secondary" disabled>📥 Download Fused Triples (.csv)</button>
-                <button id="downloadConflictReportBtn" class="btn btn-secondary" disabled>📄 Download Conflict Audit Report (.json)</button>
-                <button id="downloadFullAuditBtn" class="btn btn-secondary" disabled>📊 Download 6-Stage Audit Trail (.json)</button>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </main>
-
-    <!-- Tab 3: Graph Explorer & Query Workbench -->
-    <main class="tab-content" id="explorerTab">
-      <div class="explorer-layout">
-        <div class="card search-workbench-card">
-          <div class="query-bar-container">
-            <input type="text" id="graphQueryInput" class="query-input" placeholder="Query Knowledge Graph or ask Ollama LLM (e.g. 'Which drugs target Type 2 Diabetes?')...">
-            <button id="runQueryBtn" class="btn btn-primary">Execute Query</button>
-            <button id="clearQueryAndGraphBtn" class="btn btn-secondary" title="Clear Query & Reset Canvas">🗑️ Clear / Reset</button>
-          </div>
-
-          <div class="graph-viewport-wrapper">
-            <div id="visGraphNetwork" class="graph-network-container"></div>
-            <div class="graph-overlay-controls">
-              <button id="resetGraphView" class="btn-sm">Fit View</button>
-              <button id="clearGraphCanvasBtn" class="btn-sm" style="color: #ef4444; border-color: rgba(239, 68, 68, 0.4);">🗑️ Clear Graph</button>
-              <button id="reloadActiveKgBtn" class="btn-sm">🔄 Reload Active KG</button>
-              <button id="layoutGraphView" class="btn-sm">Auto-Layout</button>
-              <button id="fullscreenGraphView" class="btn-sm">🖥️ Fullscreen Popout</button>
-            </div>
-          </div>
-        </div>
-
-        <div class="card inspector-card">
-          <h2>Entity & Lineage Inspector</h2>
-          <div id="inspectorContent" class="inspector-details">
-            <p class="placeholder-text">Click on any node in the graph viewer to inspect canonical identity, provenance, and confidence score.</p>
-          </div>
-          <div class="llm-response-box" id="llmResponseBox">
-            <h3>Selected Ollama Model Insight</h3>
-            <div class="response-text" id="llmResponseText">No query executed yet. Run a query above to see model reasoning.</div>
-          </div>
-        </div>
-      </div>
-    </main>
-
-    <!-- Tab 4: Entity Alignment & 8B Verifier Cockpit -->
-    <main class="tab-content" id="alignmentTab">
-      <div class="section-grid">
-        <div class="card alignment-card">
-          <h2>Borderline Entity Match Verification</h2>
-          <p class="subtitle">Escalate borderline vector similarity candidates (0.70 &le; score &lt; 0.95) from active graph datasets to the local 8B model for bounded JSON verification.</p>
-
-          <!-- Candidate Selector Bar -->
-          <div class="form-group">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.4rem;">
-              <label style="margin-bottom: 0;">Candidate Pair</label>
-              <button id="loadNextCandidateBtn" class="btn-sm" style="background: #27272a; color: #ff8533; border: 1px solid #ff6b00; cursor: pointer; border-radius: 4px; padding: 2px 8px;">📋 Load Pair from Active Graph</button>
-            </div>
-            <div class="pair-inputs">
-              <input type="text" id="sourceEntityInput" class="input-field" list="activeEntityList" placeholder="Source Entity (e.g. INS Gene)">
-              <span class="arrow-sep">&harr;</span>
-              <input type="text" id="targetEntityInput" class="input-field" list="activeEntityList" placeholder="Target Candidate (e.g. Insulin Protein)">
-              <datalist id="activeEntityList"></datalist>
-            </div>
-          </div>
-
-          <!-- Step 1: Candidate Context Card (Why this pair?) -->
-          <div class="candidate-context-card">
-            <h3>Candidate Matching Signals</h3>
-            <div class="matching-signals">
-              <div class="signal">
-                <span class="signal-type">🔤 Name Overlap</span>
-                <span class="signal-detail" id="signalNameDetail">Select Entities &harr; To Compare</span>
-              </div>
-              <div class="signal">
-                <span class="signal-type">🔗 Shared Relations</span>
-                <span class="signal-detail" id="signalRelDetail">Graph Connectivity</span>
-              </div>
-              <div class="signal">
-                <span class="signal-type">📊 Attribute Overlap</span>
-                <span class="signal-detail" id="signalAttrDetail">Domain Rules Validation</span>
-              </div>
-            </div>
-            <div class="initial-score">
-              <span>Vector Similarity (Pre-verification):</span>
-              <div class="score-meter">
-                <div class="meter-fill" id="meterFill" style="width: 88%;"></div>
-              </div>
-              <span id="preVerifyScore" style="font-family: var(--font-mono); font-weight: 700; color: var(--primary-orange);">0.88</span>
-            </div>
-          </div>
-
-          <!-- Step 2: Side-by-Side Entity Comparison Panels -->
-          <div class="entity-comparison">
-            <div class="entity-panel">
-              <h4>Source Entity (Graph A)</h4>
-              <div class="entity-details">
-                <div class="detail-row">
-                  <span class="key">Label:</span>
-                  <span class="value" id="srcLabel">--</span>
+              <div class="entity-panel">
+                <h4>Target Candidate (Graph B)</h4>
+                <div class="entity-details">
+                  <div class="detail-row">
+                    <span class="key">Label:</span>
+                    <span class="value" id="tgtLabel">--</span>
+                  </div>
+                  <div class="detail-row">
+                    <span class="key">Type:</span>
+                    <span class="value" id="tgtType">Select candidate</span>
+                  </div>
+                  <div class="detail-row">
+                    <span class="key">ID:</span>
+                    <span class="value" id="tgtId">--</span>
+                  </div>
+                  <div class="detail-row">
+                    <span class="key">Connections:</span>
+                    <span class="value" id="tgtRels">
+                      <span class="rel-count" id="tgtRelCount">0 edges</span>
+                      <button type="button" class="expand-rels" id="expandTgtRelsBtn" onclick="toggleRelationships('tgt')">Show Details</button>
+                    </span>
+                  </div>
+                  <div class="relationships-expanded" id="tgtRelsExpanded" style="display: none;">
+                    <div class="relationship" id="tgtRel1">Select candidate to inspect relationships</div>
+                  </div>
                 </div>
-                <div class="detail-row">
-                  <span class="key">Type:</span>
-                  <span class="value" id="srcType">Select entity</span>
-                </div>
-                <div class="detail-row">
-                  <span class="key">ID:</span>
-                  <span class="value" id="srcId">--</span>
-                </div>
-                <div class="detail-row">
-                  <span class="key">Connections:</span>
-                  <span class="value" id="srcRels">
-                    <span class="rel-count" id="srcRelCount">0 edges</span>
-                    <button type="button" class="expand-rels" id="expandSrcRelsBtn" onclick="toggleRelationships('src')">Show Details</button>
+              </div>
+            </div>
+
+            <!-- Comparative Analysis Commentary -->
+            <div class="comparison-analysis" id="comparisonAnalysis">
+              <h4>Candidate Comparative Analysis</h4>
+              <div class="analysis-items" id="analysisItems">
+                <div class="analysis-item match">
+                  <span class="check" aria-hidden="true">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
                   </span>
+                  <span class="text" id="analysisMatch">Select a candidate pair to evaluate lexical and structural overlap.</span>
                 </div>
-                <div class="relationships-expanded" id="srcRelsExpanded" style="display: none;">
-                  <div class="relationship" id="srcRel1">Select entity to inspect relationships</div>
-                </div>
-              </div>
-            </div>
-
-            <div class="comparison-arrow">
-              <span class="arrow-label">Same Entity?</span>
-              <span style="font-size: 1.3rem; color: var(--primary-orange); font-weight: 800;">&harr;</span>
-            </div>
-
-            <div class="entity-panel">
-              <h4>Target Candidate (Graph B)</h4>
-              <div class="entity-details">
-                <div class="detail-row">
-                  <span class="key">Label:</span>
-                  <span class="value" id="tgtLabel">--</span>
-                </div>
-                <div class="detail-row">
-                  <span class="key">Type:</span>
-                  <span class="value" id="tgtType">Select candidate</span>
-                </div>
-                <div class="detail-row">
-                  <span class="key">ID:</span>
-                  <span class="value" id="tgtId">--</span>
-                </div>
-                <div class="detail-row">
-                  <span class="key">Connections:</span>
-                  <span class="value" id="tgtRels">
-                    <span class="rel-count" id="tgtRelCount">0 edges</span>
-                    <button type="button" class="expand-rels" id="expandTgtRelsBtn" onclick="toggleRelationships('tgt')">Show Details</button>
+                <div class="analysis-item mismatch">
+                  <span class="cross" aria-hidden="true">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
                   </span>
+                  <span class="text" id="analysisMismatch">Differences in entity types and relational neighborhoods appear here.</span>
                 </div>
-                <div class="relationships-expanded" id="tgtRelsExpanded" style="display: none;">
-                  <div class="relationship" id="tgtRel1">Select candidate to inspect relationships</div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <!-- Comparative Analysis Commentary -->
-          <div class="comparison-analysis" id="comparisonAnalysis">
-            <h4>Candidate Comparative Analysis</h4>
-            <div class="analysis-items" id="analysisItems">
-              <div class="analysis-item match">
-                <span class="check">✓</span>
-                <span class="text" id="analysisMatch">Select a candidate pair to evaluate lexical and structural overlap.</span>
-              </div>
-              <div class="analysis-item mismatch">
-                <span class="cross">✗</span>
-                <span class="text" id="analysisMismatch">Differences in entity types and relational neighborhoods appear here.</span>
-              </div>
-              <div class="analysis-item neutral">
-                <span class="info">○</span>
-                <span class="text" id="analysisNeutral">Candidate pair evaluated under active Domain Pack rules.</span>
-              </div>
-            </div>
-          </div>
-
-          <!-- Step 3: Confidence Slider with Categorized Bands -->
-          <div class="verification-confidence-slider" style="margin-top: 1rem;">
-            <label>Vector Similarity Score Override</label>
-            <div class="slider-container">
-              <input type="range" id="similarityRange" min="0.70" max="0.99" step="0.01" value="0.88" class="range-slider">
-              <div class="confidence-bands">
-                <div class="band low">
-                  <span class="band-label">Low (&lt; 0.80)</span>
-                  <span class="band-note">Probable Disjoint Entity</span>
-                </div>
-                <div class="band medium">
-                  <span class="band-label">Medium (0.80&ndash;0.90)</span>
-                  <span class="band-note">Likely Same Entity</span>
-                </div>
-                <div class="band high">
-                  <span class="band-label">High (&gt; 0.90)</span>
-                  <span class="band-note">Strong Assertion Overlap</span>
+                <div class="analysis-item neutral">
+                  <span class="info" aria-hidden="true">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
+                  </span>
+                  <span class="text" id="analysisNeutral">Candidate pair evaluated under active Domain Pack rules.</span>
                 </div>
               </div>
             </div>
-            <div class="slider-value-display">
-              Current Threshold: <strong id="similarityVal">0.88</strong> (<span id="confidenceBandLabel">Medium confidence</span>)
-            </div>
-          </div>
 
-          <!-- Step 4: Verification Trigger -->
-          <div class="verification-action" style="margin-top: 1rem;">
-            <button id="verifyPairBtn" class="btn btn-primary">🧬 Run 8B Model Verification</button>
-            <p class="action-note">Local 8B model will analyze ontological definitions and produce an authoritative SAME_ENTITY or DIFFERENT_ENTITY decision with reasoning.</p>
-          </div>
-        </div>
-
-        <!-- Verification Outcome & Cockpit Decisions -->
-        <div class="card verification-result-card">
-          <h2>Verification Outcome & Decision</h2>
-          <div class="result-display" id="verifierResultDisplay">
-            <div class="outcome-badge abstain" id="verificationOutcome">AWAITING VERIFICATION</div>
-            
-            <div class="model-reasoning">
-              <h4>Model Reasoning & Explanations</h4>
-              <div class="reasoning-text" id="modelReasoning">Run verification on a candidate pair to see the model's breakdown of taxonomic and relational facts.</div>
-            </div>
-
-            <div class="confidence-breakdown" id="confidenceBreakdown">
-              <h4>Confidence Factor Breakdown</h4>
-              <div class="factor">
-                <span class="factor-name">Name Similarity</span>
-                <div class="factor-bar"><div class="factor-fill" id="nameFactorFill" style="width: 88%;"></div></div>
-                <span class="factor-value" id="nameFactorVal">0.88</span>
+            <!-- Step 3: Confidence Slider with Categorized Bands -->
+            <div class="verification-confidence-slider">
+              <label for="similarityRange">Vector Similarity Score Override</label>
+              <div class="slider-container">
+                <input type="range" id="similarityRange" min="0.70" max="0.99" step="0.01" value="0.88" class="range-slider" aria-describedby="similarityVal confidenceBandLabel">
+                <div class="confidence-bands">
+                  <div class="band low">
+                    <span class="band-label">Low (&lt; 0.80)</span>
+                    <span class="band-note">Probable Disjoint Entity</span>
+                  </div>
+                  <div class="band medium">
+                    <span class="band-label">Medium (0.80&ndash;0.90)</span>
+                    <span class="band-note">Likely Same Entity</span>
+                  </div>
+                  <div class="band high">
+                    <span class="band-label">High (&gt; 0.90)</span>
+                    <span class="band-note">Strong Assertion Overlap</span>
+                  </div>
+                </div>
               </div>
-              <div class="factor">
-                <span class="factor-name">Type Compatibility</span>
-                <div class="factor-bar"><div class="factor-fill" id="typeFactorFill" style="width: 80%;"></div></div>
-                <span class="factor-value" id="typeFactorVal">0.80</span>
-              </div>
-              <div class="factor">
-                <span class="factor-name">Relation Overlap</span>
-                <div class="factor-bar"><div class="factor-fill" id="relFactorFill" style="width: 85%;"></div></div>
-                <span class="factor-value" id="relFactorVal">0.85</span>
+              <div class="slider-value-display">
+                Current Threshold: <strong id="similarityVal">0.88</strong> (<span id="confidenceBandLabel">Medium confidence</span>)
               </div>
             </div>
 
-            <!-- Decision Checkpoint Action Buttons -->
-            <div class="decision-buttons">
-              <button class="btn btn-primary" id="acceptVerificationBtn">✓ Accept as SAME Entity</button>
-              <button class="btn btn-secondary" id="rejectVerificationBtn">✗ Mark as DIFFERENT</button>
-              <button class="btn btn-secondary" id="requeueReviewBtn">👁️ Flag for Later Review</button>
+            <!-- Step 4: Verification Trigger -->
+            <div class="verification-action">
+              <button type="button" id="verifyPairBtn" class="btn btn-primary">Run 8B Model Verification</button>
+              <p class="action-note">Local 8B model will analyze ontological definitions and produce an authoritative SAME_ENTITY or DIFFERENT_ENTITY decision with reasoning.</p>
             </div>
-
-            <!-- Decision Recorded Toast Confirmation -->
-            <div id="decisionConfirmed" class="decision-confirmed" style="display: none;">
-              <p class="confirmed-text" id="confirmedText">✓ Decision recorded. Next candidate pair loading...</p>
-            </div>
-
-            <details style="margin-top: 1.25rem;">
-              <summary style="cursor: pointer; font-size: 0.78rem; color: var(--text-muted);">Inspect Raw Verifier JSON Output</summary>
-              <div class="json-box" id="verificationJson" style="margin-top: 0.5rem;">// Verification JSON response will appear here</div>
-            </details>
           </div>
-        </div>
-      </div>
-    </main>
 
-    <!-- Tab 5: 13-Stage Pipeline & Release Manager -->
-    <main class="tab-content" id="pipelineTab">
-      <div class="card pipeline-card">
-        <h2>13-Stage End-to-End Release Lifecycle</h2>
-        <p class="subtitle">Executes reproducible release lifecycle with atomic endpoint switching and rollback verification.</p>
+          <!-- Verification Outcome & Cockpit Decisions -->
+          <div class="card verification-result-card">
+            <h2>Verification Outcome &amp; Decision</h2>
+            <div class="result-display" id="verifierResultDisplay">
+              <div class="outcome-badge abstain" id="verificationOutcome">AWAITING VERIFICATION</div>
 
-        <div class="pipeline-stepper" id="pipelineStepper">
-          <div class="step-badge" data-stage="ingest">1. Ingest</div>
-          <div class="step-badge" data-stage="normalize">2. Normalize</div>
-          <div class="step-badge" data-stage="candidate_generation">3. Candidates</div>
-          <div class="step-badge" data-stage="assertion_creation">4. Assertions</div>
-          <div class="step-badge" data-stage="state_transitions">5. Transitions</div>
-          <div class="step-badge" data-stage="provenance">6. Provenance</div>
-          <div class="step-badge" data-stage="validation">7. Validation</div>
-          <div class="step-badge" data-stage="release">8. Release</div>
-          <div class="step-badge" data-stage="rdf_snapshot">9. RDF Snapshot</div>
-          <div class="step-badge" data-stage="projection">10. Projection</div>
-          <div class="step-badge" data-stage="reconciliation">11. Reconciliation</div>
-          <div class="step-badge" data-stage="endpoint_switch">12. Switch</div>
-          <div class="step-badge" data-stage="rollback">13. Rollback</div>
-        </div>
+              <div class="model-reasoning">
+                <h4>Model Reasoning &amp; Explanations</h4>
+                <div class="reasoning-text" id="modelReasoning">Run verification on a candidate pair to see the model's breakdown of taxonomic and relational facts.</div>
+              </div>
 
-        <div class="pipeline-controls-panel" style="margin: 1.25rem 0; padding: 1rem; background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 8px;">
-          <h3 style="font-size: 0.95rem; margin-top: 0; margin-bottom: 0.75rem; color: var(--text-primary);">Pipeline Execution & Target Disease Configuration</h3>
-          <div class="form-row" style="margin-bottom: 0.5rem;">
-            <div class="form-group" style="margin-bottom: 0;">
-              <label for="targetDiseaseSelect" style="font-size: 0.8rem;">Target Disease for Repurposing Traversal</label>
-              <select id="targetDiseaseSelect" class="input-field" style="padding: 0.45rem 0.6rem; font-size: 0.85rem;">
-                <option value="MONDO:0005148">Type 2 Diabetes Mellitus (MONDO:0005148)</option>
-                <option value="MONDO:0005267">EGFR Malignancy / Lung Neoplasm (MONDO:0005267)</option>
-              </select>
-            </div>
-            <div class="form-group" style="margin-bottom: 0;">
-              <label for="pipelineDomainPackSelect" style="font-size: 0.8rem;">Domain Pack</label>
-              <select id="pipelineDomainPackSelect" class="input-field" style="padding: 0.45rem 0.6rem; font-size: 0.85rem;">
-                <option value="biomedical">Biomedical Pack</option>
-                <option value="synthetic">Synthetic Pack</option>
-              </select>
+              <div class="confidence-breakdown" id="confidenceBreakdown">
+                <h4>Confidence Factor Breakdown</h4>
+                <div class="factor">
+                  <span class="factor-name">Name Similarity</span>
+                  <div class="factor-bar"><div class="factor-fill" id="nameFactorFill" style="width: 88%;"></div></div>
+                  <span class="factor-value" id="nameFactorVal">0.88</span>
+                </div>
+                <div class="factor">
+                  <span class="factor-name">Type Compatibility</span>
+                  <div class="factor-bar"><div class="factor-fill" id="typeFactorFill" style="width: 80%;"></div></div>
+                  <span class="factor-value" id="typeFactorVal">0.80</span>
+                </div>
+                <div class="factor">
+                  <span class="factor-name">Relation Overlap</span>
+                  <div class="factor-bar"><div class="factor-fill" id="relFactorFill" style="width: 85%;"></div></div>
+                  <span class="factor-value" id="relFactorVal">0.85</span>
+                </div>
+              </div>
+
+              <!-- Decision Checkpoint Action Buttons -->
+              <div class="decision-buttons">
+                <button type="button" class="btn btn-primary" id="acceptVerificationBtn">Accept as SAME Entity</button>
+                <button type="button" class="btn btn-secondary" id="rejectVerificationBtn">Mark as DIFFERENT</button>
+                <button type="button" class="btn btn-secondary" id="requeueReviewBtn">Flag for Later Review</button>
+              </div>
+
+              <!-- Decision Recorded Toast Confirmation -->
+              <div id="decisionConfirmed" class="decision-confirmed" style="display: none;">
+                <p class="confirmed-text" id="confirmedText">Decision recorded. Next candidate pair loading...</p>
+              </div>
+
+              <details class="raw-json-details">
+                <summary>Inspect Raw Verifier JSON Output</summary>
+                <div class="json-box" id="verificationJson">// Verification JSON response will appear here</div>
+              </details>
             </div>
           </div>
         </div>
+      </section>
 
-        <div class="action-bar" style="display: flex; gap: 0.75rem; flex-wrap: wrap; margin-bottom: 1.5rem;">
-          <button id="runE2EPipelineBtn" class="btn btn-primary">Run 13-Stage E2E Release</button>
-          <button id="runDrugRepurposingBtn" class="btn btn-secondary">💊 Run Drug Repurposing Pilot</button>
-          <button id="triggerRollbackBtn" class="btn btn-danger">↺ Execute 1-Click Atomic Rollback</button>
-          <button id="createBackupBtn" class="btn btn-secondary" style="border-color: #ffaa00; color: #ffaa00;">💾 Snapshot SQLite Database</button>
-        </div>
+      <!-- Tab 5: 13-Stage Pipeline & Release Manager -->
+      <section class="tab-content" id="pipelineTab" role="tabpanel" aria-labelledby="tabBtn-pipelineTab" tabindex="0">
+        <div class="card pipeline-card">
+          <h2>13-Stage End-to-End Release Lifecycle</h2>
+          <p class="subtitle">Executes reproducible release lifecycle with atomic endpoint switching and rollback verification.</p>
 
-        <!-- Dedicated Drug Repurposing Hypotheses Cockpit -->
-        <div id="drugRepurposingSection" class="card" style="display: none; margin-bottom: 1.5rem; background: var(--bg-card); border: 1px solid rgba(255, 107, 0, 0.4);">
-          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
-            <h3 style="margin: 0; color: var(--primary-orange); font-size: 1.05rem;">💊 Discovered Drug Repurposing Hypotheses</h3>
-            <span id="repurposingCountBadge" class="outcome-badge same" style="font-size: 0.75rem;">0 HYPOTHESES</span>
+          <div class="pipeline-stepper" id="pipelineStepper">
+            <div class="step-badge" data-stage="ingest">1. Ingest</div>
+            <div class="step-badge" data-stage="normalize">2. Normalize</div>
+            <div class="step-badge" data-stage="candidate_generation">3. Candidates</div>
+            <div class="step-badge" data-stage="assertion_creation">4. Assertions</div>
+            <div class="step-badge" data-stage="state_transitions">5. Transitions</div>
+            <div class="step-badge" data-stage="provenance">6. Provenance</div>
+            <div class="step-badge" data-stage="validation">7. Validation</div>
+            <div class="step-badge" data-stage="release">8. Release</div>
+            <div class="step-badge" data-stage="rdf_snapshot">9. RDF Snapshot</div>
+            <div class="step-badge" data-stage="projection">10. Projection</div>
+            <div class="step-badge" data-stage="reconciliation">11. Reconciliation</div>
+            <div class="step-badge" data-stage="endpoint_switch">12. Switch</div>
+            <div class="step-badge" data-stage="rollback">13. Rollback</div>
           </div>
-          <p style="font-size: 0.82rem; color: var(--text-muted); margin-bottom: 1rem;">
-            Hypotheses derived across production assertions via multi-hop traversal:
-            <code>Disease &larr; associated_with &larr; Gene &rarr; encodes &rarr; Protein &larr; targets &larr; Drug</code>.
-          </p>
-          <div id="hypothesesGrid" class="hypotheses-grid" style="display: grid; gap: 0.75rem;"></div>
-        </div>
 
-        <div class="execution-manifest-box" id="manifestOutput">
-          <h3>Latest Execution Manifest</h3>
-          <pre class="manifest-json" id="manifestJson">// Run a pipeline to inspect execution manifest and stage statuses</pre>
-        </div>
-      </div>
-    </main>
+          <div class="pipeline-controls-panel">
+            <h3>Pipeline Execution &amp; Target Disease Configuration</h3>
+            <div class="form-row">
+              <div class="form-group">
+                <label for="targetDiseaseSelect">Target Disease for Repurposing Traversal</label>
+                <select id="targetDiseaseSelect" class="input-field">
+                  <option value="MONDO:0005148">Type 2 Diabetes Mellitus (MONDO:0005148)</option>
+                  <option value="MONDO:0005267">EGFR Malignancy / Lung Neoplasm (MONDO:0005267)</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label for="pipelineDomainPackSelect">Domain Pack</label>
+                <select id="pipelineDomainPackSelect" class="input-field">
+                  <option value="biomedical">Biomedical Pack</option>
+                  <option value="synthetic">Synthetic Pack</option>
+                </select>
+              </div>
+            </div>
+          </div>
 
-    <!-- Tab 6: Benchmarking & Quality Analytics -->
-    <main class="tab-content" id="analyticsTab">
-      <div class="card analytics-card">
-        <div class="card-header-actions">
-          <h2>System Performance & Quality Benchmarks</h2>
-          <button id="refreshMetricsBtn" class="btn btn-primary">Run Live Benchmarks</button>
-        </div>
+          <div class="action-bar">
+            <button type="button" id="runE2EPipelineBtn" class="btn btn-primary">Run 13-Stage E2E Release</button>
+            <button type="button" id="runDrugRepurposingBtn" class="btn btn-secondary">Run Drug Repurposing Pilot</button>
+            <button type="button" id="triggerRollbackBtn" class="btn btn-danger">Execute 1-Click Atomic Rollback</button>
+            <button type="button" id="createBackupBtn" class="btn btn-secondary btn-outline-accent">Snapshot SQLite Database</button>
+          </div>
 
-        <div class="metrics-grid">
-          <div class="metric-card">
-            <div class="metric-title">Recall @ 10</div>
-            <div class="metric-value" id="recall10Val">92.0%</div>
-            <div class="metric-sub">Candidate Retrieval</div>
+          <!-- Dedicated Drug Repurposing Hypotheses Cockpit -->
+          <div id="drugRepurposingSection" class="card repurposing-cockpit" style="display: none;">
+            <div class="repurposing-header">
+              <h3 class="repurposing-title">Discovered Drug Repurposing Hypotheses</h3>
+              <span id="repurposingCountBadge" class="outcome-badge same repurposing-count">0 HYPOTHESES</span>
+            </div>
+            <p class="repurposing-intro">
+              Hypotheses derived across production assertions via multi-hop traversal:
+              <code>Disease &larr; associated_with &larr; Gene &rarr; encodes &rarr; Protein &larr; targets &larr; Drug</code>.
+            </p>
+            <div id="hypothesesGrid" class="hypotheses-grid"></div>
           </div>
-          <div class="metric-card">
-            <div class="metric-title">Recall @ 20</div>
-            <div class="metric-value" id="recall20Val">96.0%</div>
-            <div class="metric-sub">Candidate Retrieval</div>
-          </div>
-          <div class="metric-card">
-            <div class="metric-title">Recall @ 50</div>
-            <div class="metric-value" id="recall50Val">99.0%</div>
-            <div class="metric-sub">Candidate Retrieval</div>
-          </div>
-          <div class="metric-card">
-            <div class="metric-title">Resolution F1 Score</div>
-            <div class="metric-value" id="f1Val">96.0%</div>
-            <div class="metric-sub">Precision: 98% • Recall: 94%</div>
-          </div>
-        </div>
 
-        <div class="metrics-grid secondary-metrics">
-          <div class="metric-card">
-            <div class="metric-title">Operational Latency (P50)</div>
-            <div class="metric-value" id="p50Val">5.2 ms</div>
-          </div>
-          <div class="metric-card">
-            <div class="metric-title">Operational Latency (P95)</div>
-            <div class="metric-value" id="p95Val">7.8 ms</div>
-          </div>
-          <div class="metric-card">
-            <div class="metric-title">Operational Latency (P99)</div>
-            <div class="metric-value" id="p99Val">10.4 ms</div>
-          </div>
-          <div class="metric-card">
-            <div class="metric-title">Calibration ECE</div>
-            <div class="metric-value" id="eceVal">0.02</div>
+          <div class="execution-manifest-box" id="manifestOutput">
+            <h3>Latest Execution Manifest</h3>
+            <pre class="manifest-json" id="manifestJson">// Run a pipeline to inspect execution manifest and stage statuses</pre>
           </div>
         </div>
-      </div>
+      </section>
+
+      <!-- Tab 6: Benchmarking & Quality Analytics -->
+      <section class="tab-content" id="analyticsTab" role="tabpanel" aria-labelledby="tabBtn-analyticsTab" tabindex="0">
+        <div class="card analytics-card">
+          <div class="card-header-actions">
+            <h2>System Performance &amp; Quality Benchmarks</h2>
+            <button type="button" id="refreshMetricsBtn" class="btn btn-primary">Run Live Benchmarks</button>
+          </div>
+
+          <div class="metrics-grid">
+            <div class="metric-card">
+              <div class="metric-title">Recall @ 10</div>
+              <div class="metric-value" id="recall10Val">92.0%</div>
+              <div class="metric-sub">Candidate Retrieval</div>
+            </div>
+            <div class="metric-card">
+              <div class="metric-title">Recall @ 20</div>
+              <div class="metric-value" id="recall20Val">96.0%</div>
+              <div class="metric-sub">Candidate Retrieval</div>
+            </div>
+            <div class="metric-card">
+              <div class="metric-title">Recall @ 50</div>
+              <div class="metric-value" id="recall50Val">99.0%</div>
+              <div class="metric-sub">Candidate Retrieval</div>
+            </div>
+            <div class="metric-card">
+              <div class="metric-title">Resolution F1 Score</div>
+              <div class="metric-value" id="f1Val">96.0%</div>
+              <div class="metric-sub">Precision: 98% &bull; Recall: 94%</div>
+            </div>
+          </div>
+
+          <div class="metrics-grid secondary-metrics">
+            <div class="metric-card">
+              <div class="metric-title">Operational Latency (P50)</div>
+              <div class="metric-value" id="p50Val">5.2 ms</div>
+            </div>
+            <div class="metric-card">
+              <div class="metric-title">Operational Latency (P95)</div>
+              <div class="metric-value" id="p95Val">7.8 ms</div>
+            </div>
+            <div class="metric-card">
+              <div class="metric-title">Operational Latency (P99)</div>
+              <div class="metric-value" id="p99Val">10.4 ms</div>
+            </div>
+            <div class="metric-card">
+              <div class="metric-title">Calibration ECE</div>
+              <div class="metric-value" id="eceVal">0.02</div>
+            </div>
+          </div>
+        </div>
+      </section>
     </main>
   </div>
 
   <!-- Modal Dialog for Conflict Resolution Policies -->
-  <dialog id="policyHelper" class="modal">
+  <dialog id="policyHelper" class="modal" aria-labelledby="policyHelperTitle">
     <div class="modal-content">
-      <h2>Conflict Resolution Strategies Explained</h2>
+      <h2 id="policyHelperTitle">Conflict Resolution Strategies Explained</h2>
       <p>When Graph A and Graph B provide contradictory facts for the same canonical entity or predicate, the Hybrid Fusion Engine applies your selected policy.</p>
-      
+
       <div class="example-scenario">
         <h3>Example Scenario: Conflicting Assertions</h3>
-        <p style="font-size: 0.82rem; margin-bottom: 0.4rem; color: var(--text-secondary);">Two distinct datasets claim contradictory relationships for the same canonical entity:</p>
+        <p class="example-note">Two distinct datasets claim contradictory relationships for the same canonical entity:</p>
         <div class="conflict-example">
           <div class="source-a">Graph A: Entity_A &rarr; relates_to &rarr; Target_1</div>
-          <div class="conflict-marker">⚠️ CONFLICT</div>
+          <div class="conflict-marker">CONFLICT</div>
           <div class="source-b">Graph B: Entity_A &rarr; opposes &rarr; Target_1</div>
         </div>
       </div>
@@ -747,19 +767,19 @@
           </thead>
           <tbody>
             <tr>
-              <td><strong style="color: var(--status-green);">PRESERVE</strong></td>
+              <td><strong class="policy-name-green">PRESERVE</strong></td>
               <td>Both assertions retained with distinct PROV-O provenance trails</td>
               <td>Larger graph size, resolves conflicts downstream</td>
               <td>Scientific research, literature mining, clinical audit trails</td>
             </tr>
             <tr>
-              <td><strong style="color: var(--status-red);">REJECT</strong></td>
+              <td><strong class="policy-name-red">REJECT</strong></td>
               <td>Conflicting duplicate assertions are removed from the release</td>
               <td>Clean graph, risk of discarding real domain variance</td>
               <td>Strict production ingestion of known authoritative schemas</td>
             </tr>
             <tr>
-              <td><strong style="color: var(--status-yellow);">REVIEW</strong></td>
+              <td><strong class="policy-name-yellow">REVIEW</strong></td>
               <td>Assertions kept but quarantined for human expert verification</td>
               <td>Requires human review loop, zero automated loss</td>
               <td>Regulated drug repurposing and high-stakes ontology curation</td>
@@ -795,8 +815,8 @@
         </div>
       </div>
 
-      <div style="margin-top: 1.5rem; display: flex; justify-content: flex-end;">
-        <button id="closePolicyHelperBtn" class="btn btn-primary" type="button">Understood & Close</button>
+      <div class="modal-footer-actions">
+        <button id="closePolicyHelperBtn" class="btn btn-primary" type="button">Understood &amp; Close</button>
       </div>
     </div>
   </dialog>
@@ -849,8 +869,38 @@
   </template>
 
   <!-- Screen Reader Live Announcement Region (WCAG AA) -->
-  <div id="ariaAnnouncer" aria-live="polite" aria-atomic="true" style="position: absolute; left: -9999px; width: 1px; height: 1px; overflow: hidden;"></div>
+  <div id="ariaAnnouncer" aria-live="polite" aria-atomic="true" class="visually-hidden-static" style="position: absolute; left: -9999px; width: 1px; height: 1px; overflow: hidden;"></div>
 
   <script src="app.js"></script>
+  <script>
+    /* Progressive enhancement: keeps ARIA tab state in sync with app.js class-based
+     * tab switching, and adds arrow-key navigation for the tablist. Additive only --
+     * all tab switching still flows through app.js (navigateToTab). */
+    (function () {
+      function syncA11yState() {
+        document.querySelectorAll('.nav-tabs .nav-btn').forEach(function (btn) {
+          var isActive = btn.classList.contains('active');
+          btn.setAttribute('aria-selected', String(isActive));
+          btn.tabIndex = isActive ? 0 : -1;
+        });
+        document.querySelectorAll('.workflow-breadcrumb .step').forEach(function (step) {
+          if (step.classList.contains('active')) {
+            step.setAttribute('aria-current', 'step');
+          } else {
+            step.removeAttribute('aria-current');
+          }
+        });
+      }
+
+      if (typeof MutationObserver !== 'undefined') {
+        var observer = new MutationObserver(syncA11yState);
+        document.querySelectorAll('.nav-tabs .nav-btn, .workflow-breadcrumb .step').forEach(function (el) {
+          observer.observe(el, { attributes: true, attributeFilter: ['class'] });
+        });
+      }
+
+      syncA11yState();
+    })();
+  </script>
 </body>
 </html>

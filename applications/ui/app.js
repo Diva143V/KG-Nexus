@@ -75,6 +75,59 @@ function detectFormatFromFileName(fileName) {
   return null;
 }
 
+// HTML escaping utility for DOM-XSS prevention
+function escapeHtml(str) {
+  if (str == null) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+// Resilient fetch JSON reader with HTTP status awareness
+async function readJsonOrThrow(res) {
+  const text = await res.text();
+  let data;
+  try {
+    data = text ? JSON.parse(text) : {};
+  } catch (e) {
+    throw new Error(`HTTP ${res.status} ${res.statusText || 'Error'}: ${text.slice(0, 100)}`);
+  }
+  if (!res.ok) {
+    const msg = data.detail || data.message || data.error || `HTTP request failed with status ${res.status}`;
+    const err = new Error(msg);
+    err.data = data;
+    err.status = res.status;
+    throw err;
+  }
+  return data;
+}
+
+// Accessible, non-blocking toast notifications (replacing blocking alert calls)
+function showToast(message, type = 'info', duration = 4000) {
+  let container = document.getElementById('toastContainer');
+  if (!container) {
+    container = document.createElement('div');
+    container.id = 'toastContainer';
+    container.className = 'toast-container';
+    container.setAttribute('role', 'status');
+    container.setAttribute('aria-live', 'polite');
+    document.body.appendChild(container);
+  }
+  const toast = document.createElement('div');
+  toast.className = `toast toast-${type}`;
+  toast.textContent = message;
+  container.appendChild(toast);
+  announceA11y(message);
+
+  setTimeout(() => {
+    toast.classList.add('fade-out');
+    setTimeout(() => toast.remove(), 300);
+  }, duration);
+}
+
 // ==========================================================================
 // Accessibility Live Region Announcements (WCAG AA)
 // ==========================================================================
@@ -365,7 +418,7 @@ function initTabNavigation() {
         const relId = appState.graphs.lastFusion.fusion_run?.result_release_id?.value || 'release';
         triggerFileDownload(blob, `${relId}.json`);
       } else {
-        alert("No fused release generated yet.");
+        showToast("No fused release generated yet. Ingest and fuse graphs first.", "warning");
       }
     });
   }
@@ -400,11 +453,11 @@ function updateInspectorForFusion(fusionResult) {
   inspector.innerHTML = `
     <div class="entity-header">
       <h3>Active Fused Release</h3>
-      <span class="tooltip-trigger" data-tooltip="Fused Snapshot: Validated multi-source release with full PROV-O audit trails.">ℹ️</span>
+      <span class="tooltip-trigger" data-tooltip="Fused Snapshot: Validated multi-source release with full PROV-O audit trails.">i</span>
     </div>
     <div class="inspector-row">
       <span class="label">Release ID</span>
-      <span class="value" style="font-family: var(--font-mono); color: var(--primary-orange);">${relId}</span>
+      <span class="value" style="font-family: var(--font-mono); color: var(--primary-orange);">${escapeHtml(relId)}</span>
     </div>
     <div class="inspector-row">
       <span class="label">Merged Entities</span>
@@ -469,7 +522,7 @@ function initUploadHandler() {
     const detected = detectFormatFromFileName(file.name);
     if (detected) {
       formatSelect.value = detected;
-      fileInfo.textContent = `Selected: ${file.name} (${(file.size / 1024).toFixed(1)} KB) • Auto-detected format: ${detected.toUpperCase()}`;
+      fileInfo.textContent = `Selected: ${file.name} (${(file.size / 1024).toFixed(1)} KB) | Auto-detected format: ${detected.toUpperCase()}`;
     } else {
       fileInfo.textContent = `Selected: ${file.name} (${(file.size / 1024).toFixed(1)} KB)`;
     }
@@ -525,7 +578,7 @@ let fileName = selectedFile ? selectedFile.name : "demo_dataset.ttl";
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ file_name: fileName, format: format, content: content }),
       });
-      const data = await res.json();
+      const data = await readJsonOrThrow(res);
 
       if (data.status === 'success') {
         appendLog(terminal, `[Success] ${data.message}`, 'success');
@@ -569,9 +622,9 @@ function initPolicySelector() {
   const hiddenSelect = document.getElementById('conflictModeSelect');
 
   const policyFeedbackMap = {
-    conflict_preserve: '✓ PRESERVE policy selected: Retains all conflicting assertions with distinct provenance records for downstream audit. Recommended for literature mining, research, and clinical audit trails.',
-    conflict_reject: '✓ REJECT policy selected: Automatically drops contradictory assertions to guarantee a clean, collision-free release graph. Recommended for authoritative reference schemas.',
-    conflict_review: '✓ REVIEW policy selected: Quarantines conflicting assertions into an adjudication queue for human domain expert review. Recommended for regulated clinical drug validations.'
+    conflict_preserve: 'PRESERVE policy selected: Retains all conflicting assertions with distinct provenance records for downstream audit. Recommended for literature mining, research, and clinical audit trails.',
+    conflict_reject: 'REJECT policy selected: Automatically drops contradictory assertions to guarantee a clean, collision-free release graph. Recommended for authoritative reference schemas.',
+    conflict_review: 'REVIEW policy selected: Quarantines conflicting assertions into an adjudication queue for human domain expert review. Recommended for regulated clinical drug validations.'
   };
 
   function updatePolicyFeedback(value) {
@@ -637,7 +690,7 @@ function initGraphFusionHandler() {
         fetch(`/api/sample-data/${sampleAId}`),
         fetch(`/api/sample-data/${sampleBId}`)
       ]);
-      const [dataA, dataB] = await Promise.all([resA.json(), resB.json()]);
+      const [dataA, dataB] = await Promise.all([readJsonOrThrow(resA), readJsonOrThrow(resB)]);
       if (dataA.status === 'success' && dataB.status === 'success') {
         contentA = dataA.content;
         contentB = dataB.content;
@@ -645,13 +698,13 @@ function initGraphFusionHandler() {
         fileB = null;
         graphAFormatSelect.value = dataA.format;
         graphBFormatSelect.value = dataB.format;
-        fileInfoA.textContent = `Loaded Sample A: ${dataA.file_name} (${(dataA.content.length / 1024).toFixed(1)} KB) • ${dataA.format.toUpperCase()}`;
-        fileInfoB.textContent = `Loaded Sample B: ${dataB.file_name} (${(dataB.content.length / 1024).toFixed(1)} KB) • ${dataB.format.toUpperCase()}`;
+        fileInfoA.textContent = `Loaded Sample A: ${dataA.file_name} (${(dataA.content.length / 1024).toFixed(1)} KB) | ${dataA.format.toUpperCase()}`;
+        fileInfoB.textContent = `Loaded Sample B: ${dataB.file_name} (${(dataB.content.length / 1024).toFixed(1)} KB) | ${dataB.format.toUpperCase()}`;
         if (preset && document.getElementById('domainPresetSelect')) {
           document.getElementById('domainPresetSelect').value = preset;
         }
         badge.className = 'outcome-badge same';
-        badge.textContent = 'SAMPLES LOADED — READY FOR FUSION';
+        badge.textContent = 'SAMPLES LOADED -- READY FOR FUSION';
         display.textContent = `// Sample datasets loaded successfully from testdata:\n// Graph A: ${dataA.file_name} (${dataA.format})\n// Graph B: ${dataB.file_name} (${dataB.format})\n// Click "Execute 6-Stage Graph Fusion" to merge.`;
         announceA11y('Sample datasets loaded. Ready for 6-stage fusion.');
       } else {
@@ -678,7 +731,7 @@ function initGraphFusionHandler() {
       fileA = e.target.files[0];
       const detected = detectFormatFromFileName(fileA.name);
       if (detected) graphAFormatSelect.value = detected;
-      fileInfoA.textContent = `File A: ${fileA.name} (${(fileA.size / 1024).toFixed(1)} KB) • Format: ${(detected || graphAFormatSelect.value).toUpperCase()}`;
+      fileInfoA.textContent = `File A: ${fileA.name} (${(fileA.size / 1024).toFixed(1)} KB) | Format: ${(detected || graphAFormatSelect.value).toUpperCase()}`;
     }
   });
 
@@ -687,7 +740,7 @@ function initGraphFusionHandler() {
       fileB = e.target.files[0];
       const detected = detectFormatFromFileName(fileB.name);
       if (detected) graphBFormatSelect.value = detected;
-      fileInfoB.textContent = `File B: ${fileB.name} (${(fileB.size / 1024).toFixed(1)} KB) • Format: ${(detected || graphBFormatSelect.value).toUpperCase()}`;
+      fileInfoB.textContent = `File B: ${fileB.name} (${(fileB.size / 1024).toFixed(1)} KB) | Format: ${(detected || graphBFormatSelect.value).toUpperCase()}`;
     }
   });
 
@@ -697,7 +750,7 @@ function initGraphFusionHandler() {
     progressTrackerEl.style.display = 'flex';
     let html = '';
     steps.forEach(st => {
-      const icon = st.status === 'complete' ? '✓' : (st.status === 'running' ? '⟳' : '○');
+      const icon = st.status === 'complete' ? '[OK]' : (st.status === 'running' ? '...' : '[-]');
       html += `
         <div class="progress-step ${st.status}">
           <span class="icon">${icon}</span>
@@ -759,13 +812,14 @@ function initGraphFusionHandler() {
     }
 
     // Defense-in-depth: if content is still empty, auto-load default sample datasets
+    let autoLoadError = null;
     if (!contentA.trim() || !contentB.trim()) {
       try {
         const [resA, resB] = await Promise.all([
           fetch('/api/sample-data/biomedical'),
           fetch('/api/sample-data/drug_repurposing')
         ]);
-        const [dataA, dataB] = await Promise.all([resA.json(), resB.json()]);
+        const [dataA, dataB] = await Promise.all([readJsonOrThrow(resA), readJsonOrThrow(resB)]);
         if (dataA.status === 'success' && dataB.status === 'success') {
           contentA = dataA.content;
           contentB = dataB.content;
@@ -773,7 +827,7 @@ function initGraphFusionHandler() {
           fileInfoB.textContent = `Auto-loaded Default: ${dataB.file_name} (${dataB.format.toUpperCase()})`;
         }
       } catch (e) {
-        // Fallback error will be caught below
+        autoLoadError = e.message;
       }
     }
 
@@ -781,7 +835,7 @@ function initGraphFusionHandler() {
     if (!contentA.trim() || !contentB.trim()) {
       badge.className = 'outcome-badge abstain';
       badge.textContent = 'MISSING GRAPH CONTENT';
-      display.textContent = 'Error: Graph A and Graph B content are both required. Upload files or click "Quick Load Samples".';
+      display.textContent = `Error: Graph A and Graph B content are both required. Upload files or click "Quick Load Samples".${autoLoadError ? `\n(Sample auto-load failed: ${autoLoadError})` : ''}`;
       announceA11y('Fusion aborted: Graph A or Graph B content is missing.');
       executeBtn.disabled = false;
       executeBtn.textContent = originalBtnText;
@@ -802,7 +856,7 @@ function initGraphFusionHandler() {
           domain_preset: domainPreset,
         }),
       });
-      const data = await res.json();
+      const data = await readJsonOrThrow(res);
 
       if (data.status === 'success') {
         appState.graphs.lastFusion = data.fusion;
@@ -837,7 +891,7 @@ function initGraphFusionHandler() {
         appState.operations.fusionInProgress = false;
 
         badge.className = 'outcome-badge same';
-        badge.textContent = `FUSION SUCCESSFUL • RELEASE: ${data.fusion.fusion_run.result_release_id.value}`;
+        badge.textContent = `FUSION SUCCESSFUL | RELEASE: ${data.fusion.fusion_run.result_release_id.value}`;
         display.textContent = JSON.stringify(data.fusion, null, 2);
 
         // Update 6-stage top stepper badges
@@ -1029,41 +1083,42 @@ async function initGraphExplorer() {
 
   function renderRichNodeInspector(node) {
     if (!inspectorContent) return;
-    const cleanLabel = node.label.replace('\n', ' ');
+    const rawLabel = node.label != null ? node.label : (node.id != null ? node.id : 'Unnamed Entity');
+    const cleanLabel = String(rawLabel).replace(/\n+/g, ' ');
 
     // Get confidence and provenance from node data or properties
     const rawConf = node.confidence !== undefined ? node.confidence : (node.properties && node.properties.confidence !== undefined ? node.properties.confidence : null);
     const confidence = rawConf != null && !isNaN(Number(rawConf)) ? Number(rawConf) : null;
     const provenanceSources = Array.isArray(node.provenance_sources) ? node.provenance_sources : [];
-    const statusVal = node.status || 'CANONICAL';
-    const canonId = node.canonical_id || node.id;
+    const statusVal = String(node.status || 'CANONICAL');
+    const canonId = String(node.canonical_id || node.id || 'UNKNOWN');
 
     inspectorContent.innerHTML = `
       <div class="entity-header">
-        <h3>${cleanLabel}</h3>
-        <span class="tooltip-trigger" data-tooltip="Canonical Entity: Unified representation resolving synonyms and cross-source identifiers.">ℹ️</span>
+        <h3>${escapeHtml(cleanLabel)}</h3>
+        <span class="tooltip-trigger" data-tooltip="Canonical Entity: Unified representation resolving synonyms and cross-source identifiers.">i</span>
       </div>
 
       <div class="inspector-row">
         <span class="label">Canonical Namespace ID
-          <span class="tooltip-trigger" data-tooltip="Canonical ID: Deterministic unique URI synthesized by the canonicalization engine.">ℹ️</span>
+          <span class="tooltip-trigger" data-tooltip="Canonical ID: Deterministic unique URI synthesized by the canonicalization engine.">i</span>
         </span>
-        <span class="value" style="font-family: var(--font-mono); color: var(--primary-orange);">${canonId.includes(':') ? canonId : `ENTITY:${canonId}`}</span>
+        <span class="value" style="font-family: var(--font-mono); color: var(--primary-orange);">${canonId.includes(':') ? escapeHtml(canonId) : `ENTITY:${escapeHtml(canonId)}`}</span>
       </div>
 
       <div class="inspector-row">
         <span class="label">Lifecycle Status
-          <span class="tooltip-trigger" data-tooltip="Lifecycle States: PENDING, REVIEW, PROMOTED (Integrated into release), REJECTED.">ℹ️</span>
+          <span class="tooltip-trigger" data-tooltip="Lifecycle States: PENDING, REVIEW, PROMOTED (Integrated into release), REJECTED.">i</span>
         </span>
-        <span class="value status-badge ${statusVal.toLowerCase()}">
-          ${statusVal}
+        <span class="value status-badge ${escapeHtml(statusVal.toLowerCase())}">
+          ${escapeHtml(statusVal)}
           <span class="subtext">Entity verified and merged into active graph</span>
         </span>
       </div>
 
       <div class="inspector-row">
         <span class="label">Confidence Score
-          <span class="tooltip-trigger" data-tooltip="Confidence Score: Measure of certainty from 0.0 to 1.0 based on evidence and multi-claim agreement.">ℹ️</span>
+          <span class="tooltip-trigger" data-tooltip="Confidence Score: Measure of certainty from 0.0 to 1.0 based on evidence and multi-claim agreement.">i</span>
         </span>
         ${confidence !== null ? `
         <div class="confidence-display">
@@ -1082,18 +1137,18 @@ async function initGraphExplorer() {
 
       <div class="inspector-row">
         <span class="label">Provenance Lineage
-          <span class="tooltip-trigger" data-tooltip="Provenance: Complete W3C PROV-O trail tracking assertion source and execution agent.">ℹ️</span>
+          <span class="tooltip-trigger" data-tooltip="Provenance: Complete W3C PROV-O trail tracking assertion source and execution agent.">i</span>
         </span>
         <div class="provenance-trail">
           ${provenanceSources.length > 0 ? provenanceSources.map((src, i) => `
             <div class="trail-step">
-              <span class="step-title"><span>📝</span> ${src}</span>
+              <span class="step-title">${escapeHtml(src)}</span>
               <span class="step-detail">Lineage Source ${i + 1}</span>
             </div>
             ${i < provenanceSources.length - 1 ? '<div class="trail-arrow">&rarr;</div>' : ''}
           `).join('') : `
             <div class="trail-step">
-              <span class="step-title"><span>ℹ️</span> Ingested Entity</span>
+              <span class="step-title">Ingested Entity</span>
               <span class="step-detail">Base Graph Entity</span>
             </div>
           `}
@@ -1112,7 +1167,7 @@ async function initGraphExplorer() {
     if (window.networkNodes) window.networkNodes.clear();
     if (window.networkEdges) window.networkEdges.clear();
     if (inspectorContent) {
-      inspectorContent.innerHTML = '<p class="placeholder-text">Graph canvas cleared. Click "🔄 Reload Active KG" or enter a search query above to load entities.</p>';
+      inspectorContent.innerHTML = '<p class="placeholder-text">Graph canvas cleared. Click "Reload Active KG" or enter a search query above to load entities.</p>';
     }
     if (llmResponseText) {
       llmResponseText.textContent = 'No query executed yet. Run a query above to see model reasoning.';
@@ -1151,12 +1206,12 @@ async function initGraphExplorer() {
   fullscreenBtn.addEventListener('click', () => {
     const popout = window.open('', '_blank', 'width=1400,height=900,resizable=yes');
     if (!popout) {
-      alert("Please allow popups to view the graph in a separate full window.");
+      showToast("Please allow popups to view the graph in a separate full window.", "warning");
       return;
     }
 
-    const nodesData = JSON.stringify(window.networkNodes.get());
-    const edgesData = JSON.stringify(window.networkEdges.get());
+    const nodesData = JSON.stringify(window.networkNodes.get()).replace(/</g, '\\u003c');
+    const edgesData = JSON.stringify(window.networkEdges.get()).replace(/</g, '\\u003c');
 
     popout.document.write(`
       <!DOCTYPE html>
@@ -1173,8 +1228,8 @@ async function initGraphExplorer() {
       </head>
       <body>
         <div id="popoutHeader">
-          <h2>Hybrid Knowledge Graph — Fullscreen Explorer</h2>
-          <span style="font-size: 0.8rem; color: #a1a1aa;">Nodes: ${window.networkNodes.length} • Edges: ${window.networkEdges.length}</span>
+          <h2>Hybrid Knowledge Graph -- Fullscreen Explorer</h2>
+          <span style="font-size: 0.8rem; color: #a1a1aa;">Nodes: ${window.networkNodes.length} | Edges: ${window.networkEdges.length}</span>
         </div>
         <div id="fullscreenCanvas"></div>
         <script>
@@ -1241,7 +1296,7 @@ async function initGraphExplorer() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ query: q, model: model }),
       });
-      const resData = await res.json();
+      const resData = await readJsonOrThrow(res);
       llmResponseBox.classList.remove('loading');
 
       if (resData.status === 'success') {
@@ -1251,14 +1306,14 @@ async function initGraphExplorer() {
 
         llmResponseText.innerHTML = `
           <div class="llm-response-with-metadata">
-            <div class="response-answer">${resData.answer}</div>
+            <div class="response-answer">${escapeHtml(resData.answer)}</div>
             <div class="response-metadata">
               ${confidence !== null ? `<span class="confidence-badge">Confidence: ${(confidence * 100).toFixed(0)}%</span>` : '<span class="confidence-badge">Confidence: N/A</span>'}
               <span class="source-count">${citedCount} active graph entities cited</span>
             </div>
             ${matchingNodes.length > 0 ? `
               <div class="source-entities">
-                <button type="button" class="expand-btn" id="focusMatchedNodesBtn">🔍 Focus ${matchingNodes.length} Matching Entities on Canvas</button>
+                <button type="button" class="expand-btn" id="focusMatchedNodesBtn">Focus ${matchingNodes.length} Matching Entities on Canvas</button>
               </div>
             ` : ''}
           </div>
@@ -1274,12 +1329,12 @@ async function initGraphExplorer() {
           });
         }
       } else {
-        llmResponseText.innerHTML = `<div style="color: var(--status-red); font-weight: 600;">Error: ${resData.message || 'LLM query failed'}</div>`;
+        llmResponseText.innerHTML = `<div style="color: var(--status-red); font-weight: 600;">Error: ${escapeHtml(resData.message || 'LLM query failed')}</div>`;
         announceA11y(`Query error: ${resData.message}`);
       }
     } catch (err) {
       llmResponseBox.classList.remove('loading');
-      llmResponseText.innerHTML = `<div style="color: var(--status-red); font-weight: 600;">Error querying Ollama model: ${err.message}</div>`;
+      llmResponseText.innerHTML = `<div style="color: var(--status-red); font-weight: 600;">Error querying Ollama model: ${escapeHtml(err.message)}</div>`;
       announceA11y(`Query error: ${err.message}`);
     } finally {
       appState.updateOperation('queryInProgress', false);
@@ -1363,7 +1418,7 @@ function syncAlignmentCandidateComparison() {
 
   if (srcLabel) srcLabel.textContent = src;
   if (tgtLabel) tgtLabel.textContent = tgt;
-  if (signalName) signalName.innerHTML = `${src} &harr; ${tgt}`;
+  if (signalName) signalName.innerHTML = `${escapeHtml(src)} &harr; ${escapeHtml(tgt)}`;
 
   // Introspect active nodes
   const nodes = window.activeGraphNodes || [];
@@ -1408,7 +1463,7 @@ function syncAlignmentCandidateComparison() {
   const srcRelsExpanded = document.getElementById('srcRelsExpanded');
   if (srcRelsExpanded) {
     if (srcEdges.length > 0) {
-      srcRelsExpanded.innerHTML = srcEdges.slice(0, 4).map(e => `<div class="relationship">&boxur; ${e.label || 'connected_to'} &rarr; ${e.to}</div>`).join('');
+      srcRelsExpanded.innerHTML = srcEdges.slice(0, 4).map(e => `<div class="relationship">&boxur; ${escapeHtml(e.label || 'connected_to')} &rarr; ${escapeHtml(e.to)}</div>`).join('');
     } else {
       srcRelsExpanded.innerHTML = `
         <div class="relationship no-edges-text">No relationships found for selected entities</div>
@@ -1425,7 +1480,7 @@ function syncAlignmentCandidateComparison() {
   const tgtRelsExpanded = document.getElementById('tgtRelsExpanded');
   if (tgtRelsExpanded) {
     if (tgtEdges.length > 0) {
-      tgtRelsExpanded.innerHTML = tgtEdges.slice(0, 4).map(e => `<div class="relationship">&boxdl; ${e.label || 'associated_with'} &rarr; ${e.from === tgtNodeId ? e.to : e.from}</div>`).join('');
+      tgtRelsExpanded.innerHTML = tgtEdges.slice(0, 4).map(e => `<div class="relationship">&boxdl; ${escapeHtml(e.label || 'associated_with')} &rarr; ${escapeHtml(e.from === tgtNodeId ? e.to : e.from)}</div>`).join('');
     } else {
       tgtRelsExpanded.innerHTML = `
         <div class="relationship no-edges-text">No relationships found for selected entities</div>
@@ -1551,7 +1606,16 @@ function initAlignmentVerifier() {
           model: model,
         }),
       });
-      const data = await res.json();
+      let data;
+      try {
+        data = await readJsonOrThrow(res, 'alignment verification');
+      } catch (err) {
+        if (err.status === 503 && err.data && err.data.verification) {
+          data = err.data;
+        } else {
+          throw err;
+        }
+      }
 
       if (data.status === 'success') {
         const v = data.verification;
@@ -1562,7 +1626,7 @@ function initAlignmentVerifier() {
 
         if (modelReasoning) {
           modelReasoning.innerHTML = `
-            <p><strong>${v.outcome}</strong>: ${v.reasoning || (isSame ? 'Ontological definitions and graph connectivity support identical real-world referent.' : 'Entity classes and disjoint property constraints indicate distinct real-world concepts.')}</p>
+            <p><strong>${escapeHtml(v.outcome)}</strong>: ${escapeHtml(v.reasoning || (isSame ? 'Ontological definitions and graph connectivity support identical real-world referent.' : 'Entity classes and disjoint property constraints indicate distinct real-world concepts.'))}</p>
           `;
         }
 
@@ -1578,11 +1642,15 @@ function initAlignmentVerifier() {
         jsonBox.textContent = JSON.stringify(v, null, 2);
         announceA11y(`Verification completed. Model decision: ${v.outcome}`);
       } else {
-        outcomeBadge.className = 'outcome-badge abstain';
-        outcomeBadge.textContent = 'VERIFICATION OFFLINE';
-        if (modelReasoning) modelReasoning.textContent = `Model provider status: ${data.message || 'Unavailable'}. Local heuristics active.`;
-        jsonBox.textContent = JSON.stringify(data, null, 2);
-        announceA11y(`Verification notice: ${data.message}`);
+        if (outcomeBadge) {
+          outcomeBadge.className = 'outcome-badge abstain';
+          outcomeBadge.textContent = 'VERIFICATION OFFLINE (ABSTAIN)';
+        }
+        if (modelReasoning) {
+          modelReasoning.innerHTML = '<p style="color: var(--status-yellow); font-weight: 600;">Model provider unavailable. Deterministic fail-safe engaged: <strong>ABSTAIN</strong>. Candidate flagged for human review.</p>';
+        }
+        if (jsonBox) jsonBox.textContent = JSON.stringify(data, null, 2);
+        announceA11y('Model provider unavailable. Deterministic fail-safe engaged: ABSTAIN.');
       }
     } catch (err) {
       outcomeBadge.className = 'outcome-badge abstain';
@@ -1597,62 +1665,74 @@ function initAlignmentVerifier() {
     }
   });
 
-  // Checkpoint Decision Buttons with Auto-Advance Toast
+  // Checkpoint Decision Buttons with Auto-Advance Toast & Debounce Guard
   const acceptBtn = document.getElementById('acceptVerificationBtn');
   const rejectBtn = document.getElementById('rejectVerificationBtn');
   const requeueBtn = document.getElementById('requeueReviewBtn');
+  let advanceTimer = null;
+  const decisionBtns = [acceptBtn, rejectBtn, requeueBtn].filter(Boolean);
+
+  function scheduleAdvance() {
+    if (advanceTimer) clearTimeout(advanceTimer);
+    decisionBtns.forEach(b => b.disabled = true);
+    advanceTimer = setTimeout(() => {
+      advanceTimer = null;
+      decisionBtns.forEach(b => b.disabled = false);
+      loadNextCandidatePair(1);
+    }, 1800);
+  }
 
   if (acceptBtn) {
     acceptBtn.addEventListener('click', () => {
       outcomeBadge.className = 'outcome-badge same';
-      outcomeBadge.textContent = '✓ ACCEPTED: SAME_ENTITY (APPROVED)';
+      outcomeBadge.textContent = 'ACCEPTED: SAME_ENTITY (APPROVED)';
       if (modelReasoning) {
-        modelReasoning.innerHTML = '<p style="color: var(--status-green); font-weight: 600;">✓ Human domain expert approved canonical merge. Entities unified under a single canonical namespace ID in the release snapshot.</p>';
+        modelReasoning.innerHTML = '<p style="color: var(--status-green); font-weight: 600;">Human domain expert approved canonical merge. Entities unified under a single canonical namespace ID in the release snapshot.</p>';
       }
       const confirmedEl = document.getElementById('decisionConfirmed');
       const confirmedText = document.getElementById('confirmedText');
       if (confirmedEl && confirmedText) {
-        confirmedText.textContent = '✓ Decision recorded: Approved as SAME entity. Advancing to next candidate pair...';
+        confirmedText.textContent = 'Decision recorded: Approved as SAME entity. Advancing to next candidate pair...';
         confirmedEl.style.display = 'block';
       }
       announceA11y('Decision approved as same entity. Advancing to next candidate pair.');
-      setTimeout(() => loadNextCandidatePair(1), 1800);
+      scheduleAdvance();
     });
   }
 
   if (rejectBtn) {
     rejectBtn.addEventListener('click', () => {
       outcomeBadge.className = 'outcome-badge different';
-      outcomeBadge.textContent = '✗ REJECTED: DIFFERENT_ENTITY (OVERRIDE)';
+      outcomeBadge.textContent = 'REJECTED: DIFFERENT_ENTITY (OVERRIDE)';
       if (modelReasoning) {
-        modelReasoning.innerHTML = '<p style="color: var(--status-red); font-weight: 600;">✗ Marked disjoint. Entities will remain distinct with separate graph lineages.</p>';
+        modelReasoning.innerHTML = '<p style="color: var(--status-red); font-weight: 600;">Marked disjoint. Entities will remain distinct with separate graph lineages.</p>';
       }
       const confirmedEl = document.getElementById('decisionConfirmed');
       const confirmedText = document.getElementById('confirmedText');
       if (confirmedEl && confirmedText) {
-        confirmedText.textContent = '✗ Decision recorded: Marked as DIFFERENT entity. Advancing to next candidate pair...';
+        confirmedText.textContent = 'Decision recorded: Marked as DIFFERENT entity. Advancing to next candidate pair...';
         confirmedEl.style.display = 'block';
       }
       announceA11y('Decision marked as different entity. Advancing to next candidate pair.');
-      setTimeout(() => loadNextCandidatePair(1), 1800);
+      scheduleAdvance();
     });
   }
 
   if (requeueBtn) {
     requeueBtn.addEventListener('click', () => {
       outcomeBadge.className = 'outcome-badge abstain';
-      outcomeBadge.textContent = '? QUARANTINED FOR REVIEW';
+      outcomeBadge.textContent = 'QUARANTINED FOR REVIEW';
       if (modelReasoning) {
-        modelReasoning.innerHTML = '<p style="color: var(--status-yellow); font-weight: 600;">? Quarantined. Candidate pair escalated to secondary ontological review queue for subsequent release cycle.</p>';
+        modelReasoning.innerHTML = '<p style="color: var(--status-yellow); font-weight: 600;">Quarantined. Candidate pair escalated to secondary ontological review queue for subsequent release cycle.</p>';
       }
       const confirmedEl = document.getElementById('decisionConfirmed');
       const confirmedText = document.getElementById('confirmedText');
       if (confirmedEl && confirmedText) {
-        confirmedText.textContent = '? Decision recorded: Quarantined for review. Advancing to next candidate pair...';
+        confirmedText.textContent = 'Decision recorded: Quarantined for review. Advancing to next candidate pair...';
         confirmedEl.style.display = 'block';
       }
       announceA11y('Candidate quarantined for review. Advancing to next candidate pair.');
-      setTimeout(() => loadNextCandidatePair(1), 1800);
+      scheduleAdvance();
     });
   }
 }
@@ -1704,7 +1784,7 @@ function initTooltipSystem() {
     if (templateMatch) {
       contentHtml = templateMatch.innerHTML;
     } else {
-      contentHtml = `<p><strong>Information:</strong> ${tooltipKey}</p>`;
+      contentHtml = `<p><strong>Information:</strong> ${escapeHtml(tooltipKey)}</p>`;
     }
 
     const popover = document.createElement('div');
@@ -1774,14 +1854,19 @@ function initKeyboardNavigation() {
   document.addEventListener('keydown', (e) => {
     const isEditing = ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName);
     
-    // Left / Right Arrow Tab Cycling when not focused on form input
-    if (!isEditing && (e.key === 'ArrowRight' || e.key === 'ArrowLeft')) {
+    // Tab Cycling & Navigation (Left / Right / Home / End)
+    if (!isEditing && (e.key === 'ArrowRight' || e.key === 'ArrowLeft' || e.key === 'Home' || e.key === 'End')) {
       const currentTab = appState.ui.activeTab || 'uploadTab';
       const currentIndex = tabOrder.indexOf(currentTab);
       if (currentIndex >= 0) {
-        let nextIndex = e.key === 'ArrowRight' 
-          ? (currentIndex + 1) % tabOrder.length 
-          : (currentIndex - 1 + tabOrder.length) % tabOrder.length;
+        let nextIndex = currentIndex;
+        if (e.key === 'ArrowRight') nextIndex = (currentIndex + 1) % tabOrder.length;
+        else if (e.key === 'ArrowLeft') nextIndex = (currentIndex - 1 + tabOrder.length) % tabOrder.length;
+        else if (e.key === 'Home' && document.activeElement?.classList.contains('nav-btn')) nextIndex = 0;
+        else if (e.key === 'End' && document.activeElement?.classList.contains('nav-btn')) nextIndex = tabOrder.length - 1;
+        else return;
+
+        e.preventDefault();
         const nextTab = tabOrder[nextIndex];
         navigateToTab(nextTab);
         const nextBtn = document.querySelector(`.nav-btn[data-tab="${nextTab}"]`);
@@ -1822,7 +1907,20 @@ function initPipelineManager() {
   const manifestJson = document.getElementById('manifestJson');
   const stepBadges = document.querySelectorAll('.step-badge');
 
-  e2eBtn.addEventListener('click', async () => {
+  async function runPipelineTask(taskFn) {
+    if (appState.operations.pipelineInProgress) return;
+    appState.updateOperation('pipelineInProgress', true);
+    const pipelineBtns = [e2eBtn, drugBtn, rollbackBtn, backupBtn].filter(Boolean);
+    pipelineBtns.forEach(b => b.disabled = true);
+    try {
+      await taskFn();
+    } finally {
+      appState.updateOperation('pipelineInProgress', false);
+      pipelineBtns.forEach(b => b.disabled = false);
+    }
+  }
+
+  e2eBtn.addEventListener('click', () => runPipelineTask(async () => {
     resetSteps();
     manifestJson.textContent = "Executing 13-stage release lifecycle...";
     const domainPack = document.getElementById('pipelineDomainPackSelect')?.value || 'biomedical';
@@ -1837,7 +1935,7 @@ function initPipelineManager() {
           run_id: `run_ui_${Date.now()}`
         }),
       });
-      const data = await res.json();
+      const data = await readJsonOrThrow(res);
       if (data.status === 'success') {
         manifestJson.textContent = JSON.stringify(data.run_result, null, 2);
         const statuses = data.run_result.stage_statuses || {};
@@ -1857,9 +1955,9 @@ function initPipelineManager() {
     } catch (err) {
       manifestJson.textContent = `Pipeline error: ${err.message}`;
     }
-  });
+  }));
 
-  drugBtn.addEventListener('click', async () => {
+  drugBtn.addEventListener('click', () => runPipelineTask(async () => {
     resetSteps();
     const targetDisease = document.getElementById('targetDiseaseSelect')?.value || 'MONDO:0005148';
     manifestJson.textContent = `Executing Drug Repurposing Pilot graph traversal for ${targetDisease}...`;
@@ -1871,9 +1969,13 @@ function initPipelineManager() {
       const res = await fetch('/api/pipeline/execute', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pipeline_type: 'drug_repurposing', target_disease: targetDisease }),
+        body: JSON.stringify({
+          pipeline_type: 'drug_repurposing',
+          target_disease: targetDisease,
+          run_id: `run_drug_${Date.now()}`
+        }),
       });
-      const data = await res.json();
+      const data = await readJsonOrThrow(res);
       if (data.status === 'success') {
         manifestJson.textContent = JSON.stringify(data, null, 2);
         const hyps = data.hypotheses || [];
@@ -1884,11 +1986,11 @@ function initPipelineManager() {
             grid.innerHTML = '<p class="placeholder-text" style="padding: 1rem; color: var(--text-muted);">No repurposing hypotheses found for the selected disease in active production graph. Ingest drug and disease assertions to expand multi-hop traversal paths.</p>';
           } else {
             grid.innerHTML = hyps.map((h) => {
-              const drugVal = h.drug_id?.value || h.drug_id || 'Unknown Drug';
-              const diseaseVal = h.target_disease_id?.value || h.target_disease_id || targetDisease;
-              const proteinVal = h.mediating_protein_id?.value || h.mediating_protein_id || 'Unknown Protein';
-              const actVal = h.activity_id?.value || h.activity_id || 'ACT_REPURPOSE';
-              const layerVal = h.target_layer || 'hypothesis';
+              const drugVal = escapeHtml(h.drug_id?.value || h.drug_id || 'Unknown Drug');
+              const diseaseVal = escapeHtml(h.target_disease_id?.value || h.target_disease_id || targetDisease);
+              const proteinVal = escapeHtml(h.mediating_protein_id?.value || h.mediating_protein_id || 'Unknown Protein');
+              const actVal = escapeHtml(h.activity_id?.value || h.activity_id || 'ACT_REPURPOSE');
+              const layerVal = escapeHtml(h.target_layer || 'hypothesis');
 
               return `
                 <div class="hypothesis-card">
@@ -1914,11 +2016,11 @@ function initPipelineManager() {
         manifestJson.textContent = `Drug Repurposing error: ${data.message || 'Execution failed'}`;
       }
     } catch (err) {
-      manifestJson.textContent = `Pipeline error: ${err.message}`;
+      manifestJson.textContent = `Drug Repurposing error: ${err.message}`;
     }
-  });
+  }));
 
-  rollbackBtn.addEventListener('click', async () => {
+  rollbackBtn.addEventListener('click', () => runPipelineTask(async () => {
     resetSteps();
     manifestJson.textContent = 'Executing 1-click atomic rollback across SQLite store and projection backends...';
     try {
@@ -1927,7 +2029,7 @@ function initPipelineManager() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({}),
       });
-      const data = await res.json();
+      const data = await readJsonOrThrow(res);
       manifestJson.textContent = JSON.stringify(data, null, 2);
       const rollbackBadge = document.querySelector('.step-badge[data-stage="rollback"]');
       if (data.status === 'success') {
@@ -1943,34 +2045,32 @@ function initPipelineManager() {
       if (rollbackBadge) rollbackBadge.classList.add('active');
       manifestJson.textContent = `Rollback error: ${err.message}`;
     }
-  });
+  }));
 
   if (backupBtn) {
-    backupBtn.addEventListener('click', async () => {
+    backupBtn.addEventListener('click', () => runPipelineTask(async () => {
       const origText = backupBtn.textContent;
-      backupBtn.textContent = '⏳ Creating snapshot...';
-      backupBtn.disabled = true;
+      backupBtn.textContent = 'Creating snapshot...';
       try {
         const res = await fetch('/api/backup', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({}),
         });
-        const data = await res.json();
+        const data = await readJsonOrThrow(res);
         if (data.status === 'success') {
           manifestJson.textContent = JSON.stringify(data, null, 2);
-          alert(`✓ Verified SQLite database backup created:\n${data.backup_path}`);
+          showToast(`Verified SQLite database backup created:\n${data.backup_path}`, 'success');
           announceA11y('Database backup verified and saved successfully.');
         } else {
-          alert(`✗ Backup failed: ${data.message}`);
+          showToast(`Backup failed: ${data.message}`, 'error');
         }
       } catch (err) {
-        alert(`✗ Backup request error: ${err.message}`);
+        showToast(`Backup request error: ${err.message}`, 'error');
       } finally {
         backupBtn.textContent = origText;
-        backupBtn.disabled = false;
       }
-    });
+    }));
   }
 
   function resetSteps() {
@@ -1983,17 +2083,23 @@ function initPipelineManager() {
 // ==========================================================================
 function initAnalyticsDashboard() {
   const refreshBtn = document.getElementById('refreshMetricsBtn');
+  let fetchingMetrics = false;
+
   if (refreshBtn) {
     refreshBtn.addEventListener('click', fetchMetrics);
   }
   fetchMetrics();
 
   async function fetchMetrics() {
+    if (fetchingMetrics) return;
+    fetchingMetrics = true;
+    if (refreshBtn) refreshBtn.disabled = true;
+
     try {
       const res = await fetch('/api/benchmarks/metrics');
-      const data = await res.json();
+      const data = await readJsonOrThrow(res);
 
-      if (data.status === 'success') {
+      if (data.status === 'success' && data.metrics) {
         const m = data.metrics;
         document.getElementById('recall10Val').textContent = `${(m.candidate_generation.recall_at_10 * 100).toFixed(1)}%`;
         document.getElementById('recall20Val').textContent = `${(m.candidate_generation.recall_at_20 * 100).toFixed(1)}%`;
@@ -2004,9 +2110,15 @@ function initAnalyticsDashboard() {
         document.getElementById('p95Val').textContent = `${m.operations.p95_latency_ms.toFixed(1)} ms`;
         document.getElementById('p99Val').textContent = `${m.operations.p99_latency_ms.toFixed(1)} ms`;
         document.getElementById('eceVal').textContent = m.calibration_ece.toFixed(2);
+      } else {
+        showToast('Benchmark metrics currently unavailable.', 'warning');
       }
     } catch (err) {
       console.error("Failed to fetch benchmark metrics", err);
+      showToast(`Metrics unavailable: ${err.message}`, 'error');
+    } finally {
+      fetchingMetrics = false;
+      if (refreshBtn) refreshBtn.disabled = false;
     }
   }
 }
