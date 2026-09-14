@@ -105,3 +105,13 @@ GEMINI.md
 audit*.md
 audit_prompt*.md
 systematic-debugging/
+
+# ==============================================================================
+# Graphify & Antigravity Integration
+# ==============================================================================
+# Graphify generated output
+graphify-out/
+
+# Graphify Antigravity rules and workflows
+.agents/
+.antigravity/
