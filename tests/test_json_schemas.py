@@ -9,7 +9,6 @@ from core.assertions.assertion_state import AssertionStateEvent
 from core.assertions.attribute import AttributeAssertion
 from core.assertions.confidence import Confidence
 from core.assertions.literal import LiteralValue
-from core.assertions.projection import ProjectionRecord
 from core.digest.digester import DigestResult
 from core.digest.profile import DigestProfile
 from core.digest.record import CanonicalRecord
@@ -77,7 +76,6 @@ MODELS: list[type[Any]] = [
     AssertionStateEvent,
     Provenance,
     Evidence,
-    ProjectionRecord,
     ReleaseIngestion,
     FetchResult,
     NormalizationResult,

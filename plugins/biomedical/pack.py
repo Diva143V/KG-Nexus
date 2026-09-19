@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from plugins.biomedical.config import get_biomedical_preset
 from plugins.biomedical.entities import (
     ActiveMoiety,
     ChemicalEntity,
@@ -17,7 +18,7 @@ from plugins.biomedical.entities import (
 from plugins.biomedical.relations import (
     RELATION_CONTRACTS,
 )
-from sdk.domain_config import DomainFusionConfig, get_biomedical_preset
+from sdk.domain_config import DomainFusionConfig
 from sdk.manifest import PluginManifest
 
 

@@ -13,6 +13,18 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 MIGRATION_FILE_PATTERN = re.compile(r"^(\d+)_(.+)\.sql$")
+_MIGRATION_FILE_CACHE: dict[Path, tuple[float, str]] = {}
+
+
+def _read_migration_file(path: Path) -> str:
+    """Read migration file with mtime caching to avoid repeated synchronous disk reads."""
+    mtime = path.stat().st_mtime
+    cached = _MIGRATION_FILE_CACHE.get(path)
+    if cached is not None and cached[0] == mtime:
+        return cached[1]
+    content = path.read_text(encoding="utf-8")
+    _MIGRATION_FILE_CACHE[path] = (mtime, content)
+    return content
 
 
 class MigrationRunner:
@@ -114,21 +126,19 @@ class MigrationRunner:
             if version <= current_version:
                 continue
 
-            sql_content = path.read_text(encoding="utf-8")
-            # Run the migration DDL inside its own transaction via executescript.
-            # executescript issues an implicit COMMIT before the script, so
-            # we embed BEGIN/COMMIT to bracket the DDL statements.
-            script = f"BEGIN;\n{sql_content}\nCOMMIT;"
+            sql_content = _read_migration_file(path)
+            # Run the migration DDL and schema_migrations record atomically in a single script transaction.
+            escaped_desc = description.replace("'", "''")
+            script = (
+                f"BEGIN;\n"
+                f"{sql_content}\n"
+                f"INSERT INTO schema_migrations (version, description) VALUES ({version}, '{escaped_desc}');\n"
+                f"COMMIT;"
+            )
 
             connection = self._connect()
             try:
                 connection.executescript(script)
-                # Record the applied migration using a safe parameterised INSERT.
-                connection.execute(
-                    "INSERT INTO schema_migrations (version, description) VALUES (?, ?)",
-                    (version, description),
-                )
-                connection.commit()
                 applied_versions.append(version)
                 current_version = version
                 logger.info("Applied migration %03d_%s", version, description)

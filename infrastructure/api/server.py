@@ -15,11 +15,12 @@ Provides REST endpoints for:
 from __future__ import annotations
 
 import hashlib
-import importlib
 import json
+import logging
 import os
 import subprocess
 import sys
+import tempfile
 import urllib.parse
 import urllib.request
 from datetime import UTC, datetime
@@ -30,22 +31,23 @@ from typing import Any, cast
 
 from core.artifacts import ArtifactIntegrityError
 from core.assertions.assertion import Assertion
+from core.assertions.assertion_state import AssertionStateEvent
+from core.assertions.state import AssertionState
+from core.config import load_settings
 from core.entities.entity import Entity, EntityKind
 from core.fusion.models import ConflictMode, GraphFusionRequest
 from core.fusion.service import GraphFusionService
+from core.health import healthcheck
 from core.identifiers.identifier import Identifier
-from core.projection.registry import ProjectionRegistry
+from core.logging import configure_logging
+from core.provenance.provenance import Provenance
 from core.releases.manager import ReleaseManager
 from core.releases.manifest import LockfileSet, ReleaseManifest
 from core.resolution.models import CandidateMatch
 from infrastructure.benchmarking.benchmark import SystemBenchmarker
 from infrastructure.llm.verifier import Local8BVerifier
+from infrastructure.projections import create_default_projection_registry
 from infrastructure.projections.data_source import AuthoritativeReleaseRDFSource
-from infrastructure.projections.memory import MemoryProjectionBackend
-from infrastructure.projections.rdf import (
-    MemoryRDFProjectionStore,
-    RDFProjectionBackend,
-)
 from infrastructure.release.pipeline import EndToEndReleasePipeline
 from infrastructure.storage import (
     DurableArtifactStore,
@@ -55,15 +57,32 @@ from infrastructure.storage import (
     backup_database,
     verify_backup,
 )
+from sdk.loader import PluginLoader
+from sdk.registries import PluginRegistry as SdkPluginRegistry
 
 ROOT_DIR = Path(__file__).resolve().parent.parent.parent
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
+SETTINGS = load_settings()
+configure_logging(level=SETTINGS.log_level, json_format=(SETTINGS.log_format == "json"))
+logger = logging.getLogger("hybrid_kg.api")
+
 UI_DIR = ROOT_DIR / "applications" / "ui"
 TESTDATA_DIR = ROOT_DIR / "testdata"
 MAX_REQUEST_BYTES = int(os.getenv("HYBRID_KG_MAX_REQUEST_BYTES", str(10 * 1024 * 1024)))
 CORS_ORIGIN = os.getenv("HYBRID_KG_CORS_ORIGIN", "http://127.0.0.1:8000")
+DEFAULT_ALLOWED_ORIGINS = {
+    "http://127.0.0.1:8000",
+    "http://localhost:8000",
+    "http://127.0.0.1:5000",
+    "http://localhost:5000",
+}
+ALLOWED_CORS_ORIGINS: set[str] = (
+    {orig.strip() for orig in CORS_ORIGIN.split(",") if orig.strip()} | DEFAULT_ALLOWED_ORIGINS
+    if CORS_ORIGIN
+    else DEFAULT_ALLOWED_ORIGINS
+)
 
 GRAPH_STORE = GraphStore()
 ARTIFACT_STORE = DurableArtifactStore(GRAPH_STORE.database_path)
@@ -74,35 +93,24 @@ DATA_SOURCE = AuthoritativeReleaseRDFSource(
     assertion_store=ASSERTION_STORE,
     graph_store=GRAPH_STORE,
 )
-PROJECTION_REGISTRY = ProjectionRegistry()
-MEMORY_BACKEND = MemoryProjectionBackend(data_source=DATA_SOURCE, backend_id="memory")
-RDF_BACKEND = RDFProjectionBackend(
-    store=MemoryRDFProjectionStore(), data_source=DATA_SOURCE, backend_id="rdf"
-)
-PROJECTION_REGISTRY.register(MEMORY_BACKEND)
-PROJECTION_REGISTRY.register(RDF_BACKEND)
+PROJECTION_REGISTRY = create_default_projection_registry(DATA_SOURCE, include_all=True)
+MEMORY_BACKEND = PROJECTION_REGISTRY.get("memory")
+RDF_BACKEND = PROJECTION_REGISTRY.get("rdf")
+
+PLUGIN_REGISTRY = SdkPluginRegistry()
+PLUGIN_LOADER = PluginLoader(registry=PLUGIN_REGISTRY)
+
+try:
+    from applications.drug_repurposing import run_drug_repurposing_pipeline
+
+    PLUGIN_REGISTRY.workflows.register("drug_repurposing", run_drug_repurposing_pipeline)
+except ImportError:
+    pass
 
 
 def get_domain_pack(pack_name: str) -> Any:
-    """Load domain plugin pack via plugin registry / import path.
-
-    Uses the fallback import ``importlib.import_module(f"plugins.{clean_name}")``
-    and looks for a class ending in ``DomainPack``.  This avoids hardcoded
-    domain-keyword checks in infrastructure code — new plugins are discovered
-    by name alone, without requiring server-side edits.
-    """
-    clean_name = pack_name.lower().replace("-", "_")
-    try:
-        mod = importlib.import_module(f"plugins.{clean_name}")
-        for attr in dir(mod):
-            if attr.endswith("DomainPack"):
-                return getattr(mod, attr)()
-    except ImportError as exc:
-        raise ValueError(f"Unknown or uninstalled domain pack '{pack_name}': {exc}") from exc
-    raise ValueError(
-        f"Domain pack '{pack_name}' could not be initialized — "
-        'no ``plugins.{clean_name}" module or DomainPack class found.'
-    )
+    """Load domain plugin pack via formal PluginLoader and PluginRegistry."""
+    return PLUGIN_LOADER.discover_and_load_pack(pack_name)
 
 
 def fetch_ollama_models() -> list[dict[str, str]]:
@@ -188,15 +196,24 @@ class PlatformRequestHandler(BaseHTTPRequestHandler):
     """HTTP Request Handler for Hybrid KG API & Web Interface."""
 
     def log_message(self, format: str, *args: Any) -> None:
-        """Silence standard request logging for clean console output."""
-        pass
+        """Route request logs to configured logger at DEBUG level."""
+        logger.debug(format, *args)
+
+    def _get_cors_origin(self) -> str:
+        req_origin = self.headers.get("Origin", "").strip()
+        if req_origin and req_origin in ALLOWED_CORS_ORIGINS:
+            return req_origin
+        if "*" in ALLOWED_CORS_ORIGINS:
+            return "*"
+        return CORS_ORIGIN.split(",")[0].strip() if CORS_ORIGIN else "http://127.0.0.1:8000"
 
     def _send_json(self, data: Any, status: int = 200) -> None:
         content = json.dumps(data, indent=2).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(content)))
-        self.send_header("Access-Control-Allow-Origin", CORS_ORIGIN)
+        self.send_header("Access-Control-Allow-Origin", self._get_cors_origin())
+        self.send_header("Vary", "Origin")
         self.end_headers()
         self.wfile.write(content)
 
@@ -213,9 +230,10 @@ class PlatformRequestHandler(BaseHTTPRequestHandler):
 
     def do_OPTIONS(self) -> None:
         self.send_response(200)
-        self.send_header("Access-Control-Allow-Origin", CORS_ORIGIN)
+        self.send_header("Access-Control-Allow-Origin", self._get_cors_origin())
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("Vary", "Origin")
         self.end_headers()
 
     def do_GET(self) -> None:
@@ -223,7 +241,16 @@ class PlatformRequestHandler(BaseHTTPRequestHandler):
         path = parsed_url.path
 
         if path == "/health":
-            self._send_json({"status": "ok", "storage": "sqlite", "embeddings": "pluggable"})
+            h = healthcheck()
+            self._send_json(
+                {
+                    "status": h.status,
+                    "version": h.version,
+                    "component": h.component,
+                    "storage": "sqlite",
+                    "embeddings": "pluggable",
+                }
+            )
             return
 
         if path == "/api/embeddings/status":
@@ -389,6 +416,36 @@ class PlatformRequestHandler(BaseHTTPRequestHandler):
             )
             return
 
+        if path.startswith("/api/entities/by-type"):
+            parsed_url = urllib.parse.urlparse(self.path)
+            query_params = urllib.parse.parse_qs(parsed_url.query)
+            target_type = query_params.get("type", [""])[0].lower().strip()
+            active_graph = GRAPH_STORE.get_active()
+            nodes = [
+                n
+                for n in active_graph.get("nodes", [])
+                if not target_type
+                or target_type in str(n.get("type", "")).lower()
+                or target_type in str(n.get("kind", "")).lower()
+            ]
+            self._send_json({"status": "success", "entities": nodes, "count": len(nodes)})
+            return
+
+        if path == "/api/diseases/detected":
+            try:
+                try:
+                    from applications.drug_repurposing import extract_detected_diseases
+
+                    diseases = extract_detected_diseases(GRAPH_STORE.get_active(), ASSERTION_STORE)
+                except ImportError:
+                    diseases = []
+                self._send_json({"status": "success", "diseases": diseases, "count": len(diseases)})
+            except Exception as exc:
+                self._send_json(
+                    {"status": "error", "message": f"Disease detection error: {exc}"}, status=500
+                )
+            return
+
         if path == "/api/projections/active":
             try:
                 active_records = PROJECTION_STORE.get_all_active()
@@ -413,7 +470,6 @@ class PlatformRequestHandler(BaseHTTPRequestHandler):
             else:
                 self._send_json({"status": "success", "release": release})
             return
-
         if path.startswith("/api/artifacts/"):
             subpath = path.removeprefix("/api/artifacts/")
             if subpath.endswith("/verify"):
@@ -474,14 +530,15 @@ class PlatformRequestHandler(BaseHTTPRequestHandler):
                 self._send_json({"status": "error", "message": "Assertion not found."}, status=404)
             else:
                 events = ASSERTION_STORE.get_state_events(assertion.id)
-                current_state = (
+                current_st = (
                     events[-1].to_state.value if events else assertion.status_at_creation.value
                 )
                 self._send_json(
                     {
                         "status": "success",
                         "assertion": assertion.model_dump(mode="json"),
-                        "current_state": current_state,
+                        "assertion_id": assertion.id.canonical,
+                        "current_state": current_st,
                         "events": [e.model_dump(mode="json") for e in events],
                     }
                 )
@@ -634,11 +691,17 @@ class PlatformRequestHandler(BaseHTTPRequestHandler):
                 domain_config_data = data.get("domain_config", None)
                 graph_a_hash = hashlib.sha256(graph_a_content.encode("utf-8")).hexdigest()
                 graph_b_hash = hashlib.sha256(graph_b_content.encode("utf-8")).hexdigest()
-                print(
-                    f"[API Ingest PHI-Safe Log] Graph A: fmt={graph_a_format}, bytes={len(graph_a_content)}, sha256={graph_a_hash}"
+                logger.info(
+                    "[API Ingest PHI-Safe Log] Graph A: fmt=%s, bytes=%d, sha256=%s",
+                    graph_a_format,
+                    len(graph_a_content),
+                    graph_a_hash,
                 )
-                print(
-                    f"[API Ingest PHI-Safe Log] Graph B: fmt={graph_b_format}, bytes={len(graph_b_content)}, sha256={graph_b_hash}"
+                logger.info(
+                    "[API Ingest PHI-Safe Log] Graph B: fmt=%s, bytes=%d, sha256=%s",
+                    graph_b_format,
+                    len(graph_b_content),
+                    graph_b_hash,
                 )
 
                 conflict_mode_str = data.get("conflict_mode", "conflict_preserve")
@@ -669,16 +732,44 @@ class PlatformRequestHandler(BaseHTTPRequestHandler):
                 # --- Persist the release FIRST so artifacts FK is satisfied -----
                 # Assertions are persisted next; the release row references them
                 # via the release_assertions bridge table.
-                raw_assertions = getattr(fusion_res, "assertions", None) or []
+                raw_assertions = (
+                    getattr(fusion_res, "reconciled_assertions", None)
+                    or getattr(fusion_res, "assertions", None)
+                    or ()
+                )
                 assertion_ids_for_capstone = [a.id.canonical for a in raw_assertions]
+
+                # --- Persist fused assertions with lineage FIRST so assertions exist ---
+                if raw_assertions:
+                    events: list[AssertionStateEvent] = []
+                    for a in raw_assertions:
+                        ev = AssertionStateEvent(
+                            event_id=Identifier(namespace="EVT", value=f"evt_{a.id.value}_rec"),
+                            assertion_id=a.id,
+                            from_state=None,
+                            to_state=AssertionState.CANDIDATE,
+                            agent_id=a.provenance.agent_id,
+                            activity_id=a.provenance.activity_id,
+                            policy_version=getattr(
+                                fusion_res.fusion_run, "fusion_policy_version", "1.0.0"
+                            ),
+                            reason_code="FUSED_CANONICAL_ASSERTION",
+                            timestamp=datetime.now(UTC),
+                        )
+                        events.append(ev)
+                    ASSERTION_STORE.persist_batch(list(raw_assertions), events)
+
+                # --- Persist the release (validates assertion_ids and creates release row) ---
                 res_dict = GRAPH_STORE.save_release(
                     release_id,
                     res_dict,
-                    # Artifact FK validation skipped here — artifacts stored after.
                     assertion_ids=assertion_ids_for_capstone
                     if assertion_ids_for_capstone
                     else None,
                 )
+
+                if raw_assertions:
+                    ASSERTION_STORE.link_release_assertions(release_id, assertion_ids_for_capstone)
 
                 # --- Persist raw artifact blobs (graph A and B source content) ---
                 # Release row already exists so the FK constraint is satisfied.
@@ -698,10 +789,6 @@ class PlatformRequestHandler(BaseHTTPRequestHandler):
                     retrieved_at=datetime.now(UTC),
                 )
                 artifact_ids = [artifact_a.id.canonical, artifact_b.id.canonical]
-
-                # --- Persist fused assertions with lineage -----------------------
-                if raw_assertions:
-                    ASSERTION_STORE.persist_batch(list(raw_assertions), [])
 
                 release_manager = ReleaseManager()
                 release_candidate = release_manager.create_release(
@@ -735,7 +822,7 @@ class PlatformRequestHandler(BaseHTTPRequestHandler):
                     }
                 )
             except Exception as exc:
-                print(f"[Server Fusion Exception] {exc}")
+                logger.error("[Server Fusion Exception] %s", exc)
                 self._send_json({"status": "error", "message": f"Fusion error: {exc}"}, status=400)
             return
 
@@ -759,6 +846,7 @@ class PlatformRequestHandler(BaseHTTPRequestHandler):
                 if not backend_ids:
                     backend_ids = set(PROJECTION_STORE.get_known_backends()) or {"memory", "rdf"}
 
+                rollback_errors: list[str] = []
                 for b_id in sorted(backend_ids):
                     demoted_rec, restored_rec = PROJECTION_STORE.rollback_projection(
                         b_id, target_release_id=target_release_id
@@ -770,8 +858,10 @@ class PlatformRequestHandler(BaseHTTPRequestHandler):
                             try:
                                 backend = PROJECTION_REGISTRY.get(b_id)
                                 backend.rollback(demoted_rec.projection_id)
-                            except Exception:
-                                pass
+                            except Exception as exc:
+                                err_msg = f"Backend '{b_id}' failed to rollback projection '{demoted_rec.projection_id}': {exc}"
+                                logging.getLogger(__name__).error(err_msg)
+                                rollback_errors.append(err_msg)
                     if restored_rec is not None:
                         restored_projections.append(
                             {
@@ -784,6 +874,19 @@ class PlatformRequestHandler(BaseHTTPRequestHandler):
                         )
                         if active_release_id is None:
                             active_release_id = restored_rec.release_id
+
+                if rollback_errors:
+                    self._send_json(
+                        {
+                            "status": "error",
+                            "message": f"Projection backend rollback encountered errors: {'; '.join(rollback_errors)}",
+                            "rollback_errors": rollback_errors,
+                            "demoted_projections": demoted_projections,
+                            "restored_projections": restored_projections,
+                        },
+                        status=500,
+                    )
+                    return
 
                 # If neither graph snapshots nor projections were restored, return 409 unavailable
                 if previous_graph is None and not restored_projections:
@@ -927,7 +1030,35 @@ class PlatformRequestHandler(BaseHTTPRequestHandler):
                     activity_id=Identifier(namespace="ACT", value="act_candidate_gen_1"),
                 )
 
-                verifier = Local8BVerifier()
+                def _ollama_adapter(context_str: str) -> str:
+                    prompt = (
+                        "You are a strict, deterministic Knowledge Graph entity alignment verifier.\n"
+                        "Evaluate if the source and candidate entities represent the same concept.\n\n"
+                        f"Context:\n{context_str}\n\n"
+                        "Respond ONLY with a JSON object in this exact schema:\n"
+                        '{"outcome": "ACCEPT", "confidence": 0.90, "reason_codes": ["SEMANTIC_MATCH"], "explanation": "Entities represent the same concept."}\n'
+                        "Valid outcomes: ACCEPT, REJECT, ABSTAIN.\n"
+                    )
+                    payload = json.dumps(
+                        {
+                            "model": model,
+                            "prompt": prompt,
+                            "format": "json",
+                            "stream": False,
+                        }
+                    ).encode("utf-8")
+                    req = urllib.request.Request(
+                        "http://localhost:11434/api/generate",
+                        data=payload,
+                        headers={"Content-Type": "application/json"},
+                    )
+                    with urllib.request.urlopen(req, timeout=10) as resp:
+                        if resp.status == 200:
+                            result_data = json.loads(resp.read().decode("utf-8"))
+                            return str(result_data.get("response", ""))
+                    raise RuntimeError("Ollama returned empty response")
+
+                verifier = Local8BVerifier(mock_generator=_ollama_adapter)
                 v_resp, _ = verifier.verify(source_ent, candidate)
                 res_dict = v_resp.model_dump(mode="json")
                 res_dict["model_used"] = model
@@ -948,75 +1079,193 @@ class PlatformRequestHandler(BaseHTTPRequestHandler):
                 )
             return
 
+        if path == "/api/alignment/decision":
+            try:
+                src_val = str(data.get("source_entity") or data.get("source_id") or "")
+                tgt_val = str(data.get("candidate_entity") or data.get("target_id") or "")
+                decision_str = str(data.get("decision", "REVIEW")).upper()
+                reason_str = str(data.get("reason", "Human domain expert alignment review"))
+                agent_str = str(data.get("agent_id", "EXPERT_REVIEWER"))
+
+                if any(k in decision_str for k in ("ACCEPT", "SAME", "PROMOTED", "APPROVE")):
+                    target_state = AssertionState.APPROVED
+                elif any(k in decision_str for k in ("REJECT", "DIFFERENT")):
+                    target_state = AssertionState.REJECTED
+                else:
+                    target_state = AssertionState.PROMOTION_REVIEW
+
+                ass_id_raw = data.get("assertion_id")
+                ass_id: Identifier | None = None
+                if ass_id_raw:
+                    ass_id = (
+                        Identifier.parse(str(ass_id_raw))
+                        if ":" in str(ass_id_raw)
+                        else Identifier(namespace="ASSERT", value=str(ass_id_raw))
+                    )
+                else:
+                    active = GRAPH_STORE.get_active()
+                    for e in active.get("edges", []):
+                        if e.get("from") in (src_val, tgt_val) or e.get("to") in (src_val, tgt_val):
+                            edge_ass = e.get("assertion_id")
+                            if edge_ass:
+                                ass_id = (
+                                    Identifier.parse(str(edge_ass))
+                                    if ":" in str(edge_ass)
+                                    else Identifier(namespace="ASSERT", value=str(edge_ass))
+                                )
+                                break
+                    if ass_id is None:
+                        pair_hash = hashlib.sha256(f"{src_val}:{tgt_val}".encode()).hexdigest()[:16]
+                        ass_id = Identifier(namespace="ASSERT", value=f"align_dec_{pair_hash}")
+
+                current_state: AssertionState | None = None
+                existing_assertion = ASSERTION_STORE.get_assertion(ass_id)
+                if existing_assertion:
+                    events = ASSERTION_STORE.get_state_events(ass_id)
+                    current_state = (
+                        events[-1].to_state if events else existing_assertion.status_at_creation
+                    )
+                else:
+                    s_id = (
+                        Identifier.parse(src_val)
+                        if ":" in src_val
+                        else Identifier(namespace="ENTITY", value=src_val or "unknown_src")
+                    )
+                    t_id = (
+                        Identifier.parse(tgt_val)
+                        if ":" in tgt_val
+                        else Identifier(namespace="ENTITY", value=tgt_val or "unknown_tgt")
+                    )
+                    synth_assertion = Assertion(
+                        id=ass_id,
+                        subject=s_id,
+                        predicate="same_as"
+                        if target_state == AssertionState.APPROVED
+                        else "different_from",
+                        object=t_id,
+                        provenance=Provenance(
+                            agent_id=Identifier(namespace="AGENT", value=agent_str),
+                            activity_id=Identifier(namespace="ACT", value="act_alignment_decision"),
+                            asserted_at=datetime.now(UTC),
+                        ),
+                        status_at_creation=AssertionState.CANDIDATE,
+                    )
+                    ASSERTION_STORE.persist_batch([synth_assertion], [])
+                    current_state = AssertionState.CANDIDATE
+
+                evt_id = Identifier(
+                    namespace="EVT",
+                    value=f"evt_dec_{hashlib.sha256(f'{ass_id.canonical}_{datetime.now(UTC).isoformat()}'.encode()).hexdigest()[:16]}",
+                )
+                evt = AssertionStateEvent(
+                    event_id=evt_id,
+                    assertion_id=ass_id,
+                    from_state=current_state,
+                    to_state=target_state,
+                    agent_id=Identifier(namespace="AGENT", value=agent_str),
+                    activity_id=Identifier(namespace="ACT", value="act_alignment_decision"),
+                    policy_version="1.0.0",
+                    reason_code=reason_str[:64],
+                    timestamp=datetime.now(UTC),
+                )
+                ASSERTION_STORE.persist_state_event(evt)
+
+                self._send_json(
+                    {
+                        "status": "success",
+                        "event_id": evt.event_id.canonical,
+                        "assertion_id": ass_id.canonical,
+                        "from_state": current_state.value if current_state else None,
+                        "to_state": target_state.value,
+                        "reason": reason_str,
+                    }
+                )
+            except Exception as exc:
+                self._send_json(
+                    {"status": "error", "message": f"Alignment decision persistence failed: {exc}"},
+                    status=400,
+                )
+            return
+
+        if path.startswith("/api/assertions/") and path.endswith("/review"):
+            try:
+                subpath = path.removeprefix("/api/assertions/").removesuffix("/review")
+                ass_id_str = urllib.parse.unquote(subpath)
+                ass_id = (
+                    Identifier.parse(ass_id_str)
+                    if ":" in ass_id_str
+                    else Identifier(namespace="ASSERT", value=ass_id_str)
+                )
+                assertion = ASSERTION_STORE.get_assertion(ass_id)
+                if assertion is None:
+                    self._send_json(
+                        {"status": "error", "message": "Assertion not found."}, status=404
+                    )
+                    return
+
+                decision_str = str(data.get("decision", "REVIEW")).upper()
+                reason_str = str(data.get("reason", "Human assertion review"))
+                agent_str = str(data.get("agent_id", "EXPERT_REVIEWER"))
+
+                if any(k in decision_str for k in ("ACCEPT", "SAME", "PROMOTED", "APPROVE")):
+                    target_state = AssertionState.APPROVED
+                elif any(k in decision_str for k in ("REJECT", "DIFFERENT")):
+                    target_state = AssertionState.REJECTED
+                else:
+                    target_state = AssertionState.PROMOTION_REVIEW
+
+                events = ASSERTION_STORE.get_state_events(ass_id)
+                current_state = events[-1].to_state if events else assertion.status_at_creation
+
+                evt_id = Identifier(
+                    namespace="EVT",
+                    value=f"evt_rev_{hashlib.sha256(f'{ass_id.canonical}_{datetime.now(UTC).isoformat()}'.encode()).hexdigest()[:16]}",
+                )
+                evt = AssertionStateEvent(
+                    event_id=evt_id,
+                    assertion_id=ass_id,
+                    from_state=current_state,
+                    to_state=target_state,
+                    agent_id=Identifier(namespace="AGENT", value=agent_str),
+                    activity_id=Identifier(namespace="ACT", value="act_assertion_review"),
+                    policy_version="1.0.0",
+                    reason_code=reason_str[:64],
+                    timestamp=datetime.now(UTC),
+                )
+                ASSERTION_STORE.append_state_event(evt)
+                self._send_json(
+                    {
+                        "status": "success",
+                        "event_id": evt.event_id.canonical,
+                        "assertion_id": ass_id.canonical,
+                        "from_state": current_state.value,
+                        "to_state": target_state.value,
+                    }
+                )
+            except Exception as exc:
+                self._send_json(
+                    {"status": "error", "message": f"Assertion review failed: {exc}"},
+                    status=400,
+                )
+            return
+
         if path == "/api/pipeline/execute":
             try:
                 pipeline_type = data.get("pipeline_type", "e2e_release")
                 run_id = data.get("run_id", "run_web_001")
 
-                if pipeline_type == "drug_repurposing":
-                    mod = importlib.import_module("applications.drug_repurposing.workflow")
-                    DrugRepurposingPipeline = mod.DrugRepurposingPipeline
-                    AssertionStoreLayers = mod.AssertionStoreLayers
-
-                    raw_disease = data.get("target_disease", "MONDO:0005148")
-                    if ":" in raw_disease:
-                        ns, val = raw_disease.split(":", 1)
-                        disease_id = Identifier(namespace=ns, value=val)
-                    else:
-                        disease_id = Identifier(namespace="MONDO", value=raw_disease)
-
-                    pipeline = DrugRepurposingPipeline(
-                        agent_id=Identifier(namespace="SYS", value="AGENT_WEB"),
-                        activity_id=Identifier(namespace="SYS", value=f"ACT_REPURPOSE_{run_id}"),
-                    )
-
-                    # Query real production assertions from ASSERTION_STORE
-                    release_id = data.get("release_id")
-                    prod_assertions: list[Assertion] = []
-                    if release_id:
-                        prod_assertions = list(ASSERTION_STORE.get_by_release(release_id))
-                    else:
-                        active_projections = PROJECTION_STORE.get_all_active()
-                        if active_projections:
-                            for proj in active_projections:
-                                fetched = list(ASSERTION_STORE.get_by_release(proj.release_id))
-                                if fetched:
-                                    prod_assertions.extend(fetched)
-                        if not prod_assertions:
-                            # Try to find assertions from the most recent release
-                            with GRAPH_STORE._session() as conn:
-                                rel_row = conn.execute(
-                                    "SELECT release_id FROM releases ORDER BY rowid DESC LIMIT 1"
-                                ).fetchone()
-                                if rel_row:
-                                    prod_assertions = list(
-                                        ASSERTION_STORE.get_by_release(rel_row["release_id"])
-                                    )
-                        if not prod_assertions:
-                            # Fallback to all assertions in store
-                            with ASSERTION_STORE._session() as conn:
-                                rows = conn.execute(
-                                    "SELECT * FROM assertions ORDER BY created_at ASC"
-                                ).fetchall()
-                                prod_assertions = [
-                                    ASSERTION_STORE._row_to_assertion(r) for r in rows
-                                ]
-
-                    layers = AssertionStoreLayers(production=prod_assertions)
-                    hypotheses = pipeline.generate_hypotheses(
-                        target_disease_id=disease_id,
-                        layers=layers,
-                    )
-                    self._send_json(
-                        {
-                            "status": "success",
-                            "pipeline_type": "drug_repurposing",
-                            "hypotheses_generated": len(hypotheses),
-                            "hypotheses": [h.model_dump(mode="json") for h in hypotheses],
-                            "target_disease": disease_id.canonical,
-                            "layer": "hypothesis",
+                if PLUGIN_REGISTRY.workflows.has(pipeline_type):
+                    workflow_fn = PLUGIN_REGISTRY.workflows.get(pipeline_type)
+                    if workflow_fn is not None:
+                        context = {
+                            "graph_store": GRAPH_STORE,
+                            "artifact_store": ARTIFACT_STORE,
+                            "assertion_store": ASSERTION_STORE,
+                            "projection_store": PROJECTION_STORE,
                         }
-                    )
+                        wf_result = workflow_fn(data, context)
+                        self._send_json(wf_result)
+                        return
                 else:
                     e2e = EndToEndReleasePipeline(
                         graph_store=GRAPH_STORE,
@@ -1044,11 +1293,47 @@ class PlatformRequestHandler(BaseHTTPRequestHandler):
         if path == "/api/backup":
             try:
                 backup_dir_str = data.get("backup_dir", "backups")
-                backup_dir = Path(backup_dir_str)
-                backup_dir.mkdir(parents=True, exist_ok=True)
-                timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+                raw_path = Path(backup_dir_str)
+                if raw_path.is_absolute():
+                    resolved_dir = raw_path.resolve()
+                else:
+                    resolved_dir = (
+                        (ROOT_DIR / "backups" / raw_path).resolve()
+                        if not raw_path.parts or raw_path.parts[0] != "backups"
+                        else (ROOT_DIR / raw_path).resolve()
+                    )
+
+                allowed_roots = [
+                    (ROOT_DIR / "backups").resolve(),
+                    Path(tempfile.gettempdir()).resolve(),
+                ]
+                custom_base = os.getenv("HYBRID_KG_BACKUP_DIR")
+                if custom_base:
+                    allowed_roots.append(Path(custom_base).resolve())
+
+                is_allowed = False
+                for base in allowed_roots:
+                    try:
+                        resolved_dir.relative_to(base)
+                        is_allowed = True
+                        break
+                    except ValueError:
+                        continue
+
+                if not is_allowed:
+                    self._send_json(
+                        {
+                            "status": "error",
+                            "message": "Invalid backup directory: path traversal detected or path outside allowed backup directory.",
+                        },
+                        status=400,
+                    )
+                    return
+
+                resolved_dir.mkdir(parents=True, exist_ok=True)
+                timestamp_str = datetime.now(UTC).strftime("%Y%m%d_%H%M%SZ")
                 backup_filename = f"hybrid_kg_backup_{timestamp_str}.sqlite3"
-                backup_path = backup_dir / backup_filename
+                backup_path = resolved_dir / backup_filename
                 backup_database(GRAPH_STORE.database_path, backup_path)
                 is_valid = verify_backup(backup_path)
                 if not is_valid:

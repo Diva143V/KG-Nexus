@@ -164,6 +164,7 @@ class PluginRegistry:
 
     def __init__(self) -> None:
         self._plugins: dict[str, PluginManifest] = {}
+        self._packs: dict[str, Any] = {}
         self.capabilities = CapabilityRegistry()
         self.schemas = SchemaRegistry()
         self.ontologies = OntologyRegistry()
@@ -174,6 +175,7 @@ class PluginRegistry:
         self.evidence_policies = EvidencePolicyRegistry()
         self.projections = ProjectionRegistry()
         self.fusion_configs = FusionConfigRegistry()
+        self.workflows = WorkflowRegistry()
 
     def register_plugin(self, manifest: PluginManifest) -> None:
         self._plugins[manifest.plugin_id] = manifest
@@ -186,3 +188,28 @@ class PluginRegistry:
 
     def all_plugins(self) -> dict[str, PluginManifest]:
         return dict(self._plugins)
+
+    def register_pack(self, name: str, pack: Any) -> None:
+        self._packs[name.lower().strip()] = pack
+
+    def get_pack(self, name: str) -> Any | None:
+        return self._packs.get(name.lower().strip())
+
+
+class WorkflowRegistry:
+    """Registry holding domain or application workflow runners."""
+
+    def __init__(self) -> None:
+        self._workflows: dict[str, Any] = {}
+
+    def register(self, name: str, runner: Any) -> None:
+        self._workflows[name.lower().strip()] = runner
+
+    def get(self, name: str) -> Any | None:
+        return self._workflows.get(name.lower().strip())
+
+    def has(self, name: str) -> bool:
+        return name.lower().strip() in self._workflows
+
+    def all(self) -> dict[str, Any]:
+        return dict(self._workflows)

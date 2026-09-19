@@ -166,6 +166,8 @@ class RDFProjectionBackend:
         projection_id: str,
     ) -> None:
         """Roll back the projection; retained content stays untouched."""
+        if projection_id not in self._projects:
+            return
         self._require(projection_id)
         self._store.rollback(rdf_candidate_name(projection_id))
 

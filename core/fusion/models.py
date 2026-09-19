@@ -8,6 +8,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from core.assertions.assertion import Assertion
 from core.identifiers.identifier import Identifier
 from sdk.domain_config import DomainFusionConfig
 
@@ -118,6 +119,7 @@ class GraphFusionResult(BaseModel):
     derived_assertions_count: int
     nodes: list[dict[str, Any]]
     edges: list[dict[str, Any]]
+    reconciled_assertions: tuple[Assertion, ...] = Field(default_factory=tuple)
     conflict_report: dict[str, Any] = Field(default_factory=dict)
     stage_breakdowns: dict[str, Any] = Field(default_factory=dict)
     audit_report: list[dict[str, Any]] = Field(default_factory=list)

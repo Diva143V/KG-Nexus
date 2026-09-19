@@ -7,6 +7,7 @@ without importing concrete infrastructure backends.
 
 from __future__ import annotations
 
+import threading
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
@@ -86,6 +87,7 @@ class EmbeddingProvider(Protocol):
         ...
 
 
+_RESOLVER_LOCK = threading.Lock()
 _RESOLVER: Callable[[MatchStrategyConfig], EmbeddingProvider] | None = None
 
 
@@ -94,13 +96,16 @@ def register_embedding_resolver(
 ) -> None:
     """Register the active embedding provider resolver function."""
     global _RESOLVER
-    _RESOLVER = resolver
+    with _RESOLVER_LOCK:
+        _RESOLVER = resolver
 
 
 def resolve_embedding_provider(strategy: MatchStrategyConfig) -> EmbeddingProvider:
     """Resolve an embedding provider via the registered resolver."""
-    if _RESOLVER is None:
+    with _RESOLVER_LOCK:
+        resolver = _RESOLVER
+    if resolver is None:
         raise EmbeddingProviderUnavailableError(
             "No embedding resolver registered. Infrastructure backend not initialized."
         )
-    return _RESOLVER(strategy)
+    return resolver(strategy)

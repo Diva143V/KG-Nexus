@@ -9,6 +9,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+from core.assertions.assertion import Assertion
+from core.assertions.attribute import AttributeAssertion
 from core.identifiers.identifier import Identifier
 from core.rdf.graph import RDFDataset
 from core.rdf.writer import RDFReleaseWriter
@@ -87,9 +89,13 @@ class AuthoritativeReleaseRDFSource(RDFDataSource):
             created_at=datetime.now(UTC),
         )
 
+        rel_assertions = [a for a in assertions if isinstance(a, Assertion)]
+        attr_assertions = [a for a in assertions if isinstance(a, AttributeAssertion)]
+
         dataset = self._writer.build_snapshot(
             release=release,
-            assertions=assertions,
+            assertions=rel_assertions,
+            attribute_assertions=attr_assertions,
             events=events,
         )
         self._cache[release_id] = dataset

@@ -37,27 +37,60 @@ class DefaultIdentityPolicy:
 
     def __init__(self, domain_config: DomainFusionConfig | None = None) -> None:
         self.domain_config = domain_config or resolve_domain_config(None)
+        self._disjoint_pairs: set[tuple[str, str]] = set()
+        if (
+            hasattr(self.domain_config, "meaning_alignment")
+            and self.domain_config.meaning_alignment
+        ):
+            for d in self.domain_config.meaning_alignment.disjoint_classes:
+                d0, d1 = d[0].lower(), d[1].lower()
+                self._disjoint_pairs.add((d0, d1))
+                self._disjoint_pairs.add((d1, d0))
 
     def evaluate(self, candidate: CandidateMatch) -> IdentityDecision:
         """Evaluate a single candidate match."""
-        # 0. Negative control rejection
-        s_val = str(candidate.source_entity.id.value)
-        c_val = str(candidate.candidate_entity.id.value)
-        s_desc = (candidate.source_entity.description or "").lower()
-        c_desc = (candidate.candidate_entity.description or "").lower()
-        if (
-            "_neg" in s_val
-            or "_neg" in c_val
-            or "target negative" in s_desc
-            or "target negative" in c_desc
-        ):
-            return IdentityDecision(
-                source_entity=candidate.source_entity,
-                candidate_entity=candidate.candidate_entity,
-                accepted=False,
-                method="negative_control_rejection",
-                activity_id=candidate.activity_id,
+        # 0. Disjoint class veto
+        cfg = getattr(self, "domain_config", None) or resolve_domain_config(None)
+        if cfg is self.domain_config and hasattr(self, "_disjoint_pairs"):
+            disjoint_pairs = self._disjoint_pairs
+        else:
+            disjoint_pairs = {
+                (d[0].lower(), d[1].lower()) for d in cfg.meaning_alignment.disjoint_classes
+            }
+            disjoint_pairs.update(
+                {(d[1].lower(), d[0].lower()) for d in cfg.meaning_alignment.disjoint_classes}
             )
+
+        def _get_entity_type_names(ent: Any) -> set[str]:
+            types = {str(ent.kind.value).lower()}
+            if hasattr(ent, "label") and ent.label:
+                types.add(str(ent.label).lower())
+            val_parts = [str(getattr(ent.id, "value", "")).lower()]
+            if hasattr(ent.id, "namespace") and ent.id.namespace:
+                val_parts.append(str(ent.id.namespace).lower())
+            if hasattr(ent.id, "canonical") and ent.id.canonical:
+                val_parts.append(str(ent.id.canonical).lower())
+            val_parts.append(str(ent.id).lower())
+            val_lower = " ".join(val_parts)
+            for et in cfg.entity_types:
+                et_name = et.name.lower()
+                prefixes = [p.lower() for p in et.namespace_prefixes]
+                if et_name in val_lower or any(p in val_lower for p in prefixes):
+                    types.add(et_name)
+            return types
+
+        s_types = _get_entity_type_names(candidate.source_entity)
+        c_types = _get_entity_type_names(candidate.candidate_entity)
+        for st in s_types:
+            for ct in c_types:
+                if (st, ct) in disjoint_pairs:
+                    return IdentityDecision(
+                        source_entity=candidate.source_entity,
+                        candidate_entity=candidate.candidate_entity,
+                        accepted=False,
+                        method="disjoint_class_veto",
+                        activity_id=candidate.activity_id,
+                    )
 
         # 1. Kind mismatch rejection
         if candidate.source_entity.kind != candidate.candidate_entity.kind:
@@ -82,11 +115,22 @@ class DefaultIdentityPolicy:
                 activity_id=candidate.activity_id,
             )
 
-        # 3. Normalized label match
+        # 3. Calibrated confidence thresholds & normalized label match
         cfg = getattr(self, "domain_config", None) or resolve_domain_config(None)
         high_confidence_threshold = getattr(
             cfg.confidence_thresholds, "high_confidence_threshold", 0.88
         )
+        review_threshold = getattr(cfg.confidence_thresholds, "review_threshold", 0.70)
+
+        if candidate.ranking_score < review_threshold:
+            return IdentityDecision(
+                source_entity=candidate.source_entity,
+                candidate_entity=candidate.candidate_entity,
+                accepted=False,
+                method="low_confidence_rejection",
+                activity_id=candidate.activity_id,
+            )
+
         if (
             candidate.ranking_method == "normalized_label"
             or candidate.ranking_score >= high_confidence_threshold
@@ -165,6 +209,17 @@ class FusionExecutionResult(tuple[Any, ...]):
         self.audit_report = audit_report or []
         self.review_candidates = review_candidates or []
         self.source_alignment = source_alignment
+
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, FusionExecutionResult):
+            return (
+                super().__eq__(other)
+                and self.stage_breakdowns == other.stage_breakdowns
+                and self.audit_report == other.audit_report
+                and self.review_candidates == other.review_candidates
+                and self.source_alignment == other.source_alignment
+            )
+        return super().__eq__(other)
 
 
 class GenericFusionEngine:
@@ -251,14 +306,18 @@ class GenericFusionEngine:
                 [c.to_core_candidate_match() for c in meaning_result.aligned_candidates]
             )
             auto_merged_set = set()
+            review_required_list: list[dict[str, Any]] = []
             for dec in legacy_decisions:
+                pair_tuple = (str(dec.source_entity.id.value), str(dec.candidate_entity.id.value))
                 if dec.accepted:
-                    auto_merged_set.add(
-                        (str(dec.source_entity.id.value), str(dec.candidate_entity.id.value))
-                    )
+                    auto_merged_set.add(pair_tuple)
+                else:
+                    review_required_list.append({"pair": pair_tuple, "method": dec.method})
             auto_merged_pairs = list(auto_merged_set)
+            review_candidates = review_required_list
         else:
             auto_merged_pairs = decision_result.auto_merged_pairs
+            review_candidates = decision_result.review_required_pairs
 
         # ====================================================================
         # STAGE 5: Create Canonical Entities and Facts
@@ -372,6 +431,8 @@ class GenericFusionEngine:
                     }
                 )
 
+        total_dedup_count = canonical_result.deduplicated_facts_count + prov_result.dedup_count
+
         # Assemble 6-Stage Execution Metrics Breakdown
         stage_breakdowns = {
             "stage_1_normalize_data": {
@@ -427,12 +488,13 @@ class GenericFusionEngine:
                 "canonical_entities_created": canonical_result.canonical_entities_count,
                 "aliases_mapped": len(canonical_result.alias_map),
                 "canonical_assertions_created": len(canonical_result.canonicalized_assertions),
+                "deduplicated_facts_count": canonical_result.deduplicated_facts_count,
             },
             "stage_6_provenance_conflicts": {
                 "total_contradictions_detected": len(prov_result.contradictions),
                 "total_functional_collisions_detected": len(prov_result.functional_collisions),
                 "total_conflicts_detected": prov_result.conflict_count,
-                "total_deduplicated_triples": prov_result.dedup_count,
+                "total_deduplicated_triples": total_dedup_count,
                 "conflict_mode": conflict_mode.value,
                 "final_reconciled_facts": len(prov_result.reconciled_assertions),
             },
@@ -446,7 +508,7 @@ class GenericFusionEngine:
             f"Source Alignment: {len(source_alignment_result.aligned_pairs)} pairs aligned | "
             f"Stage 2 Candidates: {len(candidates)} | "
             f"Stage 4 Auto-merged: {len(auto_merged_pairs)} | "
-            f"Stage 6 Deduplicated: {prov_result.dedup_count} | "
+            f"Stage 6 Deduplicated: {total_dedup_count} | "
             f"Conflicts: {prov_result.conflict_count} | "
             f"Final Assertions: {len(prov_result.reconciled_assertions)}"
         )
@@ -456,10 +518,10 @@ class GenericFusionEngine:
             nodes=nodes,
             edges=edges,
             merged_count=len(canonical_result.alias_map),
-            dedup_count=prov_result.dedup_count,
+            dedup_count=total_dedup_count,
             conflict_report=prov_result.conflict_report,
             stage_breakdowns=stage_breakdowns,
             audit_report=audit_report_dicts,
-            review_candidates=decision_result.review_required_pairs,
+            review_candidates=review_candidates,
             source_alignment=source_alignment_result,
         )

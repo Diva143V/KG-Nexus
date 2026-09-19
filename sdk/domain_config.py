@@ -12,6 +12,7 @@ Enables configuration-driven graph fusion across any domain without modifying co
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
@@ -35,11 +36,10 @@ class EntityTypeKind(StrEnum):
     ORGANIZATION = "organization"
     LOCATION = "location"
     PERSON = "person"
-    GENE = "gene"
-    PROTEIN = "protein"
-    DRUG = "drug"
-    CHEMICAL = "chemical"
-    DISEASE = "disease"
+    OBJECT = "object"
+    EVENT = "event"
+    IDENTIFIER = "identifier"
+    OTHER = "other"
 
 
 class EntityTypeConfig(BaseModel):
@@ -47,22 +47,24 @@ class EntityTypeConfig(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    name: str = Field(min_length=1, description="Entity type name (e.g. Person, Gene, Company)")
+    name: str = Field(
+        min_length=1, description="Entity type name (e.g. Person, Organization, Concept, Event)"
+    )
     namespace_prefixes: tuple[str, ...] = Field(
         default_factory=tuple,
         description="URI/IRI prefix substrings or namespace identifiers associated with this type",
     )
     identity_keys: tuple[str, ...] = Field(
         default_factory=tuple,
-        description="Property names used as primary identity keys (e.g. ['tax_id', 'email'], ['hgnc_id'])",
+        description="Property names used as primary identity keys (e.g. ['id', 'tax_id', 'email'])",
     )
     kind: EntityTypeKind = Field(
         default=EntityTypeKind.CONCEPT,
-        description="Entity kind classification (concept, organization, location, person, gene, protein, drug, chemical, disease)",
+        description="Entity kind classification (concept, organization, location, person, object, event, identifier, other)",
     )
     alias_property_names: tuple[str, ...] = Field(
         default_factory=tuple,
-        description="Property names treated as aliases/synonyms for this entity type (e.g. ['symbol', 'gene_symbol'])",
+        description="Property names treated as aliases/synonyms for this entity type (e.g. ['symbol', 'alias', 'code'])",
     )
     display_label_template: str = Field(
         default="{label} ({type})",
@@ -103,10 +105,8 @@ class LiteralRuleConfig(BaseModel):
             "molecularWeight",
             "approvedDate",
             "chembl_id",
-            "gene_symbol",
-            "drug_name",
-            "chemical_name",
-            "disease_name",
+            "weight",
+            "formula",
         ),
         description="Predicates whose object values must always remain typed literals, never entity nodes",
     )
@@ -228,6 +228,15 @@ class MatchStrategyConfig(BaseModel):
     label_substring_match_score: float = Field(
         default=0.75, ge=0.0, le=1.0, description="Score for label substring matches"
     )
+    exact_label_match_score: float = Field(
+        default=0.95, ge=0.0, le=1.0, description="Score for normalized exact label matches"
+    )
+    composite_embedding_floor: float = Field(
+        default=0.40,
+        ge=0.0,
+        le=1.0,
+        description="Minimum embedding similarity floor when combined with other scores",
+    )
     normalized_label_threshold: float = Field(
         default=0.90, ge=0.0, le=1.0, description="Threshold for normalized label method selection"
     )
@@ -289,6 +298,8 @@ class ConflictResolutionRules(BaseModel):
             ("inactive", "active"),
             ("approved", "rejected"),
             ("rejected", "approved"),
+            ("true", "false"),
+            ("false", "true"),
         ),
         description="Pairs of predicates that contradict each other for identical (subject, object)",
     )
@@ -380,6 +391,9 @@ class DomainFusionConfig(BaseModel):
     confidence_thresholds: ConfidenceThresholds = Field(default_factory=ConfidenceThresholds)
     conflict_rules: ConflictResolutionRules = Field(default_factory=ConflictResolutionRules)
     source_identity: SourceIdentityConfig = Field(default_factory=SourceIdentityConfig)
+    target_projection_backend: str = Field(
+        default="rdf", description="Target projection backend ID (e.g. 'rdf', 'memory')"
+    )
     default_node_color: str = Field(
         default="#ff6b00", description="Default visualization color for subject nodes"
     )
@@ -445,6 +459,12 @@ _literal_rules_general = LiteralRuleConfig(
         "url",
         "comment",
         "status",
+        "chemicalFormula",
+        "molecularWeight",
+        "approvedDate",
+        "chembl_id",
+        "weight",
+        "formula",
     ),
     date_formats=_DATE_FORMATS_DEFAULTS,  # use module-level defaults
     strip_quotes=_STRIP_QUOTES_DEFAULT,
@@ -535,248 +555,122 @@ def get_general_agnostic_preset() -> DomainFusionConfig:
     )
 
 
+_DOMAIN_PRESET_FACTORIES: dict[str, Callable[[], DomainFusionConfig]] = {}
+
+
+def register_domain_preset(
+    domain_id: str,
+    factory_or_config: Callable[[], DomainFusionConfig] | DomainFusionConfig,
+) -> None:
+    """Register a domain configuration preset dynamically."""
+    key = domain_id.lower().strip()
+    if callable(factory_or_config):
+        _DOMAIN_PRESET_FACTORIES[key] = factory_or_config
+    else:
+        _DOMAIN_PRESET_FACTORIES[key] = lambda: factory_or_config
+
+
+register_domain_preset("general_agnostic", get_general_agnostic_preset)
+
+
+class _DomainPresetsProxy(dict[str, DomainFusionConfig]):
+    """Dynamic dict proxy for domain presets that resolves registered factories on demand."""
+
+    def _discover_and_register(self, key: str) -> DomainFusionConfig | None:
+        clean = key.lower().strip().replace("-", "_").replace("_domain_pack", "")
+        if clean in _DOMAIN_PRESET_FACTORIES:
+            return _DOMAIN_PRESET_FACTORIES[clean]()
+        import importlib
+
+        try:
+            mod = importlib.import_module(f"plugins.{clean}.config")
+            for attr in dir(mod):
+                if attr.endswith("_preset") and callable(getattr(mod, attr)):
+                    factory = getattr(mod, attr)
+                    cfg = factory()
+                    if isinstance(cfg, DomainFusionConfig):
+                        _DOMAIN_PRESET_FACTORIES[clean] = factory
+                        return cfg
+        except Exception:
+            pass
+        return None
+
+    def _discover_all(self) -> None:
+        try:
+            import pkgutil
+
+            import plugins
+
+            for _, name, is_pkg in pkgutil.iter_modules(plugins.__path__):
+                if is_pkg:
+                    self._discover_and_register(name)
+        except Exception:
+            pass
+
+    def __getitem__(self, key: str) -> DomainFusionConfig:
+        k = key.lower().strip()
+        if k in _DOMAIN_PRESET_FACTORIES:
+            return _DOMAIN_PRESET_FACTORIES[k]()
+        discovered = self._discover_and_register(k)
+        if discovered is not None:
+            return discovered
+        return super().__getitem__(key)
+
+    def get(self, key: str, default: Any = None) -> Any:
+        k = key.lower().strip()
+        if k in _DOMAIN_PRESET_FACTORIES:
+            return _DOMAIN_PRESET_FACTORIES[k]()
+        discovered = self._discover_and_register(k)
+        if discovered is not None:
+            return discovered
+        return super().get(key, default)
+
+    def __contains__(self, key: object) -> bool:
+        if isinstance(key, str):
+            k = key.lower().strip()
+            if k in _DOMAIN_PRESET_FACTORIES:
+                return True
+            if self._discover_and_register(k) is not None:
+                return True
+            return super().__contains__(key)
+        return super().__contains__(key)
+
+    def keys(self) -> Any:
+        self._discover_all()
+        return _DOMAIN_PRESET_FACTORIES.keys()
+
+    def values(self) -> Any:
+        self._discover_all()
+        return [_DOMAIN_PRESET_FACTORIES[k]() for k in _DOMAIN_PRESET_FACTORIES]
+
+    def items(self) -> Any:
+        self._discover_all()
+        return [(k, _DOMAIN_PRESET_FACTORIES[k]()) for k in _DOMAIN_PRESET_FACTORIES]
+
+    def __iter__(self) -> Any:
+        self._discover_all()
+        return iter(_DOMAIN_PRESET_FACTORIES)
+
+    def __len__(self) -> int:
+        self._discover_all()
+        return len(_DOMAIN_PRESET_FACTORIES)
+
+
+DOMAIN_PRESETS: dict[str, DomainFusionConfig] = _DomainPresetsProxy()
+
+
 def get_biomedical_preset() -> DomainFusionConfig:
     """Domain preset for biomedical and pharmaceutical knowledge graphs."""
-    return DomainFusionConfig(
-        domain_id="biomedical",
-        domain_name="Biomedical & Life Sciences Preset",
-        description="Configuration for biomedical ontologies (HGNC, UniProt, ChEBI, MONDO, DrugBank).",
-        entity_types=(
-            EntityTypeConfig(
-                name="Gene",
-                namespace_prefixes=("hgnc", "gene"),
-                identity_keys=("hgnc_id", "symbol"),
-                color="#ff6b00",
-                group="Gene",
-            ),
-            EntityTypeConfig(
-                name="Protein",
-                namespace_prefixes=("uniprot", "protein"),
-                identity_keys=("uniprot_id", "accession"),
-                color="#ffaa00",
-                group="Protein",
-            ),
-            EntityTypeConfig(
-                name="Drug",
-                namespace_prefixes=("chembl", "drugbank", "drug"),
-                identity_keys=("chembl_id", "cas_number"),
-                color="#ff9100",
-                group="Drug",
-            ),
-            EntityTypeConfig(
-                name="Disease",
-                namespace_prefixes=("mondo", "doid", "disease"),
-                identity_keys=("mondo_id", "doid_id"),
-                color="#e65100",
-                group="Disease",
-            ),
-            EntityTypeConfig(
-                name="Chemical",
-                namespace_prefixes=("chebi", "pubchem"),
-                identity_keys=("chebi_id", "cid"),
-                color="#ffab40",
-                group="Chemical",
-            ),
-        ),
-        literal_rules=LiteralRuleConfig(
-            literal_predicates=(
-                "name",
-                "fullName",
-                "symbol",
-                "description",
-                "synonym",
-                "molecularWeight",
-                "iupacName",
-            ),
-        ),
-        meaning_alignment=MeaningAlignmentConfig(
-            relation_mappings=(
-                MeaningMapping(
-                    source_concept="encodes",
-                    target_concept="producesProtein",
-                    direction=MappingDirection.EQUIVALENT,
-                ),
-                MeaningMapping(
-                    source_concept="targets",
-                    target_concept="modulates",
-                    direction=MappingDirection.DIRECTED_A_TO_B,
-                ),
-                MeaningMapping(
-                    source_concept="indicated_for",
-                    target_concept="treats",
-                    direction=MappingDirection.EQUIVALENT,
-                ),
-            ),
-            attribute_mappings=(
-                MeaningMapping(
-                    source_concept="gene_symbol",
-                    target_concept="symbol",
-                    direction=MappingDirection.EQUIVALENT,
-                ),
-                MeaningMapping(
-                    source_concept="prefLabel",
-                    target_concept="name",
-                    direction=MappingDirection.EQUIVALENT,
-                ),
-            ),
-            disjoint_classes=(
-                ("Gene", "Disease"),
-                ("Drug", "Disease"),
-            ),
-        ),
-        match_strategy=MatchStrategyConfig(
-            enable_embeddings=False,
-            embedding_model_id="cambridgeltl/SapBERT-from-PubMedBERT-fulltext",
-            role_suffixes_to_strip=("drug", "gene", "protein", "disease", "compound"),
-        ),
-        confidence_thresholds=ConfidenceThresholds(
-            high_confidence_threshold=0.88, review_threshold=0.65
-        ),
-        conflict_rules=ConflictResolutionRules(
-            opposing_predicates=(
-                ("treats", "contraindicates"),
-                ("contraindicates", "treats"),
-                ("inhibits", "activates"),
-                ("activates", "inhibits"),
-                ("causes", "prevents"),
-                ("prevents", "causes"),
-                ("increases", "decreases"),
-                ("decreases", "increases"),
-                ("positive_regulator", "negative_regulator"),
-                ("negative_regulator", "positive_regulator"),
-            ),
-            predicate_authorities={"symbol": "graph_a", "encodes": "graph_a"},
-        ),
-        source_identity=SourceIdentityConfig(
-            supported_schemes=(
-                SourceSchemeRule(
-                    scheme_prefix="urn:doi:",
-                    category="publication",
-                    strip_prefix_variants=("https://doi.org/", "http://dx.doi.org/", "doi:"),
-                ),
-                SourceSchemeRule(scheme_prefix="urn:pmid:", category="publication"),
-                SourceSchemeRule(scheme_prefix="urn:pmc:", category="publication"),
-                SourceSchemeRule(scheme_prefix="https://clinicaltrials.gov/", category="web"),
-                SourceSchemeRule(scheme_prefix="urn:patent:", category="patent"),
-                SourceSchemeRule(
-                    scheme_prefix="urn:internal:", category="internal", require_content_hash=True
-                ),
-                SourceSchemeRule(scheme_prefix="urn:manual:", category="ground_truth"),
-            ),
-            enable_source_alignment=True,
-            allow_manual_override_uris=True,
-        ),
-    )
+    if "biomedical" in DOMAIN_PRESETS:
+        return DOMAIN_PRESETS["biomedical"]
+    return get_general_agnostic_preset()
 
 
 def get_synthetic_preset() -> DomainFusionConfig:
     """Domain preset for enterprise synthetic and organization graphs."""
-    return DomainFusionConfig(
-        domain_id="synthetic",
-        domain_name="Enterprise & Synthetic Domain Preset",
-        description="Configuration for people, companies, departments, and geographic locations.",
-        entity_types=(
-            EntityTypeConfig(
-                name="Person",
-                identity_keys=("email", "employee_id", "ssn"),
-                color="#3b82f6",
-                group="Person",
-            ),
-            EntityTypeConfig(
-                name="Company",
-                identity_keys=("duns", "vat_id", "tax_id"),
-                color="#10b981",
-                group="Company",
-            ),
-            EntityTypeConfig(
-                name="Department", identity_keys=("dept_code",), color="#f59e0b", group="Department"
-            ),
-            EntityTypeConfig(
-                name="Location",
-                identity_keys=("geo_id", "postal_code"),
-                color="#8b5cf6",
-                group="Location",
-            ),
-        ),
-        literal_rules=LiteralRuleConfig(),
-        meaning_alignment=MeaningAlignmentConfig(
-            class_mappings=(
-                MeaningMapping(
-                    source_concept="Organization",
-                    target_concept="Company",
-                    direction=MappingDirection.EQUIVALENT,
-                ),
-                MeaningMapping(
-                    source_concept="Employee",
-                    target_concept="Person",
-                    direction=MappingDirection.EQUIVALENT,
-                ),
-            ),
-            relation_mappings=(
-                MeaningMapping(
-                    source_concept="worksAt",
-                    target_concept="employedBy",
-                    direction=MappingDirection.EQUIVALENT,
-                ),
-                MeaningMapping(
-                    source_concept="headquarteredIn",
-                    target_concept="locatedIn",
-                    direction=MappingDirection.EQUIVALENT,
-                ),
-            ),
-            attribute_mappings=(
-                MeaningMapping(
-                    source_concept="fullName",
-                    target_concept="name",
-                    direction=MappingDirection.EQUIVALENT,
-                ),
-                MeaningMapping(
-                    source_concept="foundedYear",
-                    target_concept="foundedDate",
-                    direction=MappingDirection.EQUIVALENT,
-                ),
-            ),
-            disjoint_classes=(
-                ("Person", "Company"),
-                ("Person", "Location"),
-            ),
-        ),
-        match_strategy=MatchStrategyConfig(
-            enable_embeddings=False,
-            embedding_model_id="BAAI/bge-large-en-v1.5",
-            role_suffixes_to_strip=("inc", "corp", "ltd", "llc", "group", "co"),
-        ),
-        confidence_thresholds=ConfidenceThresholds(
-            high_confidence_threshold=0.88, review_threshold=0.65
-        ),
-        conflict_rules=ConflictResolutionRules(
-            opposing_predicates=(
-                ("employedBy", "terminatedBy"),
-                ("terminatedBy", "employedBy"),
-                ("owns", "divested"),
-            ),
-            functional_predicates=("birthDate", "foundedDate", "ceo", "headquarters"),
-        ),
-        source_identity=SourceIdentityConfig(
-            supported_schemes=(
-                SourceSchemeRule(
-                    scheme_prefix="urn:internal:", category="internal", require_content_hash=True
-                ),
-                SourceSchemeRule(scheme_prefix="https://", category="web"),
-                SourceSchemeRule(scheme_prefix="urn:patent:", category="patent"),
-                SourceSchemeRule(scheme_prefix="urn:manual:", category="ground_truth"),
-            ),
-            enable_source_alignment=True,
-            allow_manual_override_uris=True,
-        ),
-    )
-
-
-DOMAIN_PRESETS: dict[str, DomainFusionConfig] = {
-    "general_agnostic": get_general_agnostic_preset(),
-    "biomedical": get_biomedical_preset(),
-    "synthetic": get_synthetic_preset(),
-}
+    if "synthetic" in DOMAIN_PRESETS:
+        return DOMAIN_PRESETS["synthetic"]
+    return get_general_agnostic_preset()
 
 
 def resolve_domain_config(

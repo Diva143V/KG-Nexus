@@ -30,7 +30,6 @@ from core.fusion.service import GraphFusionService
 from core.identifiers.identifier import Identifier
 from core.projection.manager import ProjectionManager
 from core.projection.profile import ProjectionProfile, UnsupportedBehavior
-from core.projection.registry import ProjectionRegistry
 from core.rdf.graph import NamedGraph, NamedGraphCategory, RDFDataset, graph_name
 from core.rdf.terms import RDFTerm, Triple, iri, string_literal
 from core.rdf.writer import RDFReleaseWriter
@@ -40,11 +39,6 @@ from core.releases.release import Release, ReleaseGate
 from core.releases.status import ReleaseStatus
 from core.resources.artifact import Artifact, ArtifactKind
 from infrastructure.projections.data_source import AuthoritativeReleaseRDFSource
-from infrastructure.projections.memory import MemoryProjectionBackend
-from infrastructure.projections.rdf import (
-    MemoryRDFProjectionStore,
-    RDFProjectionBackend,
-)
 from infrastructure.storage.artifact_store import DurableArtifactStore
 from infrastructure.storage.assertion_store import DurableAssertionStore
 from infrastructure.storage.graph_store import GraphStore
@@ -201,6 +195,7 @@ class EndToEndReleasePipeline:
         ingested_artifacts: list[Artifact] = []
         assertions: list[Assertion] = []
         dataset: RDFDataset | None = None
+        output_digest: str = hashlib.sha256(f"{release_id}_initial".encode()).hexdigest()
 
         # --- Stage 1: Artifact Ingestion ----------------------------------------
         t0 = time.perf_counter()
@@ -363,47 +358,68 @@ class EndToEndReleasePipeline:
                     "Injected assertion creation failure or candidate generation failed"
                 )
 
-            # Parse actual assertions from ingested artifacts using ParserRegistry
-            service = GraphFusionService()
-            all_new_assertions: list[Assertion] = []
+            from core.fusion.canonicalizer import Canonicalizer
+            from core.fusion.confidence_decider import ConfidenceDecider
+            from core.fusion.meaning_aligner import MeaningAligner
+            from core.fusion.models import ConflictMode
+            from core.fusion.provenance_conflict_manager import ProvenanceConflictManager
 
-            if ingested_artifacts:
-                for artifact in ingested_artifacts:
-                    art_bytes = self.artifact_store.get_content(artifact.id)
-                    if not art_bytes:
-                        continue
+            # 1. Meaning Alignment
+            meaning_aligner = MeaningAligner(domain_config)
+            meaning_result = meaning_aligner.align_candidates(
+                candidates, norm_graph_a, norm_graph_b
+            )
+            aligned_assertions_a = meaning_aligner.align_assertions(
+                norm_graph_a, "graph_a", result=meaning_result
+            )
+            aligned_assertions_b = meaning_aligner.align_assertions(
+                norm_graph_b, "graph_b", result=meaning_result
+            )
 
-                    art_str = (
-                        art_bytes.decode("utf-8")
-                        if isinstance(art_bytes, bytes)
-                        else str(art_bytes)
-                    )
-                    try:
-                        parsed = service.parse_content_to_assertions(
-                            art_str,
-                            artifact.media_type or "turtle",
-                            artifact.id,
-                            activity_id,
-                            domain_config=domain_config,
-                        )
-                        all_new_assertions.extend(parsed)
-                    except Exception as parse_err:
-                        logger.warning(
-                            "Stage 4 parse warning for artifact %s: %s", artifact.id, parse_err
-                        )
+            # 2. Match Confidence Decision
+            confidence_decider = ConfidenceDecider(domain_config)
+            decision_result = confidence_decider.evaluate_candidates(
+                meaning_result.aligned_candidates
+            )
 
-            if not all_new_assertions:
+            # 3. Create Canonical Entities and Facts
+            canonicalizer = Canonicalizer(domain_config)
+            canonical_result = canonicalizer.canonicalize(
+                norm_graph_a,
+                norm_graph_b,
+                aligned_assertions_a,
+                aligned_assertions_b,
+                decision_result.auto_merged_pairs,
+                graph_a_id=Identifier(namespace="graph", value="graph_a"),
+                graph_b_id=Identifier(namespace="graph", value="graph_b"),
+            )
+
+            # 4. Preserve Provenance and Conflicts
+            conflict_mode = ConflictMode.CONFLICT_PRESERVE
+            prov_manager = ProvenanceConflictManager(domain_config)
+            prov_result = prov_manager.reconcile(
+                canonical_result.canonicalized_assertions,
+                conflict_mode=conflict_mode,
+                graph_a_id=Identifier(namespace="graph", value="graph_a"),
+                graph_b_id=Identifier(namespace="graph", value="graph_b"),
+            )
+
+            assertions = list(prov_result.reconciled_assertions)
+
+            if not assertions:
                 raise RuntimeError(
-                    f"No assertions could be parsed from ingested artifacts for release {release_id} "
+                    f"No assertions could be parsed from ingested artifacts or created through fusion for release {release_id} "
                     f"under plugin '{manifest.plugin_id}'. Failing closed to prevent unverified graph promotion."
                 )
-
-            assertions = all_new_assertions
 
             stage_statuses["assertion_creation"] = "PASS"
             stage_evidence["assertion_creation"] = {
                 "assertion_count": len(assertions),
                 "assertion_ids": [a.id.canonical for a in assertions],
+                "auto_merged_pairs_count": len(decision_result.auto_merged_pairs),
+                "canonical_entities_count": canonical_result.canonical_entities_count,
+                "deduplicated_count": prov_result.dedup_count,
+                "conflict_count": prov_result.conflict_count,
             }
         except Exception as exc:
             stage_statuses["assertion_creation"] = "FAIL"
@@ -423,7 +439,7 @@ class EndToEndReleasePipeline:
 
             for a in assertions:
                 ev1 = AssertionStateEvent(
-                    event_id=Identifier(namespace="EVT", value=f"evt_{a.id.value}_rec"),
+                    event_id=Identifier(namespace="EVT", value=f"evt_{a.id.value}_0_rec"),
                     assertion_id=a.id,
                     from_state=None,
                     to_state=AssertionState.CANDIDATE,
@@ -433,18 +449,7 @@ class EndToEndReleasePipeline:
                     reason_code="INGESTED_AS_CANDIDATE",
                     timestamp=now_dt,
                 )
-                ev2 = AssertionStateEvent(
-                    event_id=Identifier(namespace="EVT", value=f"evt_{a.id.value}_val"),
-                    assertion_id=a.id,
-                    from_state=AssertionState.CANDIDATE,
-                    to_state=AssertionState.VERIFIED,
-                    agent_id=a.provenance.agent_id,
-                    activity_id=a.provenance.activity_id,
-                    policy_version=policy_ver,
-                    reason_code="PASSED_SCHEMA_VALIDATION",
-                    timestamp=now_dt,
-                )
-                all_events.extend([ev1, ev2])
+                all_events.append(ev1)
 
             self.assertion_store.persist_batch(assertions, all_events)
             self.assertion_store.link_release_assertions(
@@ -494,8 +499,10 @@ class EndToEndReleasePipeline:
         if stage_statuses.get("provenance") == "PASS" and release_obj is not None:
             try:
                 release_obj = self.release_manager.begin_validation(release_obj, at=now_dt)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.error("Failed to transition release %s to VALIDATING: %s", release_id, exc)
+                stage_statuses["validation"] = "FAIL"
+                stage_evidence["validation"] = {"error": f"Lifecycle transition failed: {exc}"}
 
         # --- Stage 7: Plugin Validation & Blocking Gates -----------------------
         t0 = time.perf_counter()
@@ -562,6 +569,24 @@ class EndToEndReleasePipeline:
                 release_obj = self.release_manager.complete_validation(
                     release_obj, gate=passing_gate, at=now_dt
                 )
+
+            if all_passed:
+                verified_events: list[AssertionStateEvent] = []
+                for a in assertions:
+                    ev_val = AssertionStateEvent(
+                        event_id=Identifier(namespace="EVT", value=f"evt_{a.id.value}_1_val"),
+                        assertion_id=a.id,
+                        from_state=AssertionState.CANDIDATE,
+                        to_state=AssertionState.VERIFIED,
+                        agent_id=a.provenance.agent_id,
+                        activity_id=a.provenance.activity_id,
+                        policy_version=policy_ver,
+                        reason_code="PASSED_SCHEMA_VALIDATION",
+                        timestamp=now_dt,
+                    )
+                    verified_events.append(ev_val)
+                self.assertion_store.persist_batch([], verified_events)
+                all_events.extend(verified_events)
 
             stage_statuses["validation"] = "PASS" if all_passed else "FAIL"
             stage_evidence["validation"] = {
@@ -675,17 +700,13 @@ class EndToEndReleasePipeline:
             stage_timings_ms["rdf_snapshot"] = round((time.perf_counter() - t0) * 1000, 2)
 
         # Setup Projection Execution Infrastructure
-        proj_registry = ProjectionRegistry()
-        mem_backend = MemoryProjectionBackend(data_source=self.data_source, backend_id="memory")
-        rdf_store = MemoryRDFProjectionStore()
-        rdf_backend = RDFProjectionBackend(
-            store=rdf_store, data_source=self.data_source, backend_id="rdf"
-        )
-        proj_registry.register(mem_backend)
-        proj_registry.register(rdf_backend)
+        from infrastructure.projections import create_default_projection_registry
+
+        proj_registry = create_default_projection_registry(self.data_source, include_all=True)
+        mem_backend = proj_registry.get("memory")
 
         proj_manager = ProjectionManager(registry=proj_registry)
-        backend_id = "memory" if "synthetic" in manifest.plugin_id else "rdf"
+        backend_id = getattr(domain_config, "target_projection_backend", "rdf")
         proj_id = Identifier(namespace="PROJ", value=f"{backend_id}_{run_id}")
         proj_profile = ProjectionProfile(
             profile_id=f"{manifest.plugin_id}_profile_v1",
@@ -693,8 +714,6 @@ class EndToEndReleasePipeline:
             preserved_fields=("urn:graph:release_metadata",),
             unsupported_behavior=UnsupportedBehavior.SKIP,
         )
-        output_digest = hashlib.sha256(f"{release_id}_{backend_id}".encode()).hexdigest()
-
         # --- Stage 10: Projection Build and Validation --------------------------
         t0 = time.perf_counter()
         try:
@@ -721,6 +740,39 @@ class EndToEndReleasePipeline:
                     release_obj = self.release_manager.project(release_obj, at=now_dt)
 
             rec_count = built_proj.build_result.record_count if built_proj.build_result else 0
+
+            # Genuine input_digest computed over actual serialized RDF dataset bytes
+            if dataset is not None:
+                rdf_bytes = dataset.model_dump_json(indent=None).encode("utf-8")
+                input_digest = hashlib.sha256(rdf_bytes).hexdigest()
+            else:
+                input_digest = hashlib.sha256(b"").hexdigest()
+
+            # Genuine output_digest computed over actual projected record payload bytes from built_proj
+            if backend_id == "memory" and proj_id.canonical in mem_backend._candidate_records:
+                proj_records = mem_backend._candidate_records[proj_id.canonical]
+                sorted_digests = sorted(r.digest for r in proj_records)
+                output_payload = json.dumps(
+                    sorted_digests, sort_keys=True, separators=(",", ":")
+                ).encode("utf-8")
+                output_digest = hashlib.sha256(output_payload).hexdigest()
+            elif dataset is not None:
+                from core.projection.reconciliation import ProjectionReconciler
+
+                recs = ProjectionReconciler().authoritative_records(dataset)
+                sorted_digests = sorted(r.digest for r in recs)
+                output_payload = json.dumps(
+                    sorted_digests, sort_keys=True, separators=(",", ":")
+                ).encode("utf-8")
+                output_digest = hashlib.sha256(output_payload).hexdigest()
+            else:
+                built_bytes = (
+                    built_proj.model_dump_json(indent=None).encode("utf-8")
+                    if built_proj is not None
+                    else b""
+                )
+                output_digest = hashlib.sha256(built_bytes).hexdigest()
+
             self.projection_store.record_manifest(
                 ProjectionManifestRecord(
                     projection_id=proj_id.canonical,
@@ -728,7 +780,7 @@ class EndToEndReleasePipeline:
                     backend_id=backend_id,
                     status=val_proj.status.value,
                     schema_version="1.0.0",
-                    input_digest=hashlib.sha256(release_id.encode()).hexdigest(),
+                    input_digest=input_digest,
                     output_digest=output_digest,
                     record_count=rec_count,
                     manifest_json=json.dumps({"profile_id": proj_profile.profile_id}),
@@ -827,6 +879,34 @@ class EndToEndReleasePipeline:
                 release_obj = self.release_manager.approve(release_obj, gate=gate, at=now_dt)
                 release_obj = self.release_manager.publish(release_obj, at=now_dt)
 
+            approved_events: list[AssertionStateEvent] = []
+            for a in assertions:
+                ev_rev = AssertionStateEvent(
+                    event_id=Identifier(namespace="EVT", value=f"evt_{a.id.value}_2_rev"),
+                    assertion_id=a.id,
+                    from_state=AssertionState.VERIFIED,
+                    to_state=AssertionState.PROMOTION_REVIEW,
+                    agent_id=a.provenance.agent_id,
+                    activity_id=a.provenance.activity_id,
+                    policy_version=policy_ver,
+                    reason_code="READY_FOR_PROMOTION",
+                    timestamp=now_dt,
+                )
+                ev_app = AssertionStateEvent(
+                    event_id=Identifier(namespace="EVT", value=f"evt_{a.id.value}_3_app"),
+                    assertion_id=a.id,
+                    from_state=AssertionState.PROMOTION_REVIEW,
+                    to_state=AssertionState.APPROVED,
+                    agent_id=a.provenance.agent_id,
+                    activity_id=a.provenance.activity_id,
+                    policy_version=policy_ver,
+                    reason_code="PASSED_RELEASE_GATE",
+                    timestamp=now_dt,
+                )
+                approved_events.extend([ev_rev, ev_app])
+            self.assertion_store.persist_batch([], approved_events)
+            all_events.extend(approved_events)
+
             proj_manager.activate_candidate(proj_id)
             self.projection_store.update_status(proj_id.canonical, "ACTIVE", activated_at=now_iso)
             self.graph_store.update_release_status(release_id, ReleaseStatus.PUBLISHED.value)
@@ -903,13 +983,34 @@ class EndToEndReleasePipeline:
             ):
                 try:
                     self.release_manager.quarantine(release_obj, reasons=reasons, at=now_dt)
-                except Exception:
-                    pass
-            self.graph_store.update_release_status(
-                release_id,
-                ReleaseStatus.QUARANTINED.value,
-                quarantine_reasons=reasons,
-            )
+                except Exception as exc:
+                    logger.error(
+                        "Failed to quarantine release %s in ReleaseManager: %s", release_id, exc
+                    )
+            try:
+                if self.graph_store.get_release(release_id) is not None:
+                    self.graph_store.update_release_status(
+                        release_id,
+                        ReleaseStatus.QUARANTINED.value,
+                        quarantine_reasons=reasons,
+                    )
+                else:
+                    self.graph_store.save_release(
+                        release_id,
+                        {
+                            "version": plugin_ver,
+                            "status": ReleaseStatus.QUARANTINED.value,
+                            "plugin_id": manifest.plugin_id,
+                            "created_at": now_iso,
+                            "quarantine_reasons": reasons,
+                        },
+                    )
+            except Exception as store_err:
+                logger.warning(
+                    "Could not update quarantine status in GraphStore for release %s: %s",
+                    release_id,
+                    store_err,
+                )
 
         all_artifact_digests = tuple(a.sha256 for a in ingested_artifacts) + (output_digest,)
 

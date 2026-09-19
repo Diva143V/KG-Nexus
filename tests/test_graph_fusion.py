@@ -7,10 +7,11 @@ from core.entities.entity import Entity, EntityKind
 from core.fusion.candidates import CandidateGenerator
 from core.fusion.engine import DefaultIdentityPolicy
 from core.fusion.models import ConflictMode, GraphFusionRequest
-from core.fusion.reconciliation import EdgeReconciler
+from core.fusion.provenance_conflict_manager import ProvenanceConflictManager
 from core.fusion.service import GraphFusionService
 from core.identifiers.identifier import Identifier
 from core.provenance.provenance import Provenance
+from sdk.domain_config import DomainFusionConfig
 
 
 def _make_test_assertion(a_id: str, subj: str, pred: str, obj: str, graph_name: str) -> Assertion:
@@ -73,27 +74,23 @@ def test_uri_mismatch_and_label_collision_handling():
 
 
 def test_structural_triple_deduplication():
-    reconciler = EdgeReconciler()
+    manager = ProvenanceConflictManager(DomainFusionConfig())
     a1 = _make_test_assertion("a1", "ex:A", "worksAt", "ex:X", "graph_a")
     a2 = _make_test_assertion("a2", "ex:A", "worksAt", "ex:X", "graph_b")
 
-    reconciled, dedup_count, *_ = reconciler.reconcile_assertions(
-        [a1], [a2], conflict_mode=ConflictMode.CONFLICT_REJECT
-    )
-    assert dedup_count == 1
-    assert len(reconciled) == 1
+    res = manager.reconcile([a1, a2], conflict_mode=ConflictMode.CONFLICT_REJECT)
+    assert res.dedup_count == 1
+    assert len(res.reconciled_assertions) == 1
 
 
 def test_conflict_preserve_mode():
-    reconciler = EdgeReconciler()
+    manager = ProvenanceConflictManager(DomainFusionConfig())
     a1 = _make_test_assertion("a1", "ex:A", "worksAt", "ex:X", "graph_a")
     a2 = _make_test_assertion("a2", "ex:A", "worksAt", "ex:X", "graph_b")
 
-    reconciled, dedup_count, *_ = reconciler.reconcile_assertions(
-        [a1], [a2], conflict_mode=ConflictMode.CONFLICT_PRESERVE
-    )
-    assert dedup_count == 1
-    assert len(reconciled) == 2
+    res = manager.reconcile([a1, a2], conflict_mode=ConflictMode.CONFLICT_PRESERVE)
+    assert res.dedup_count == 1
+    assert len(res.reconciled_assertions) == 2
 
 
 def test_graph_fusion_service_execution_and_immutability():

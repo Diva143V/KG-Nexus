@@ -6,6 +6,7 @@ Executes real in-process neural semantic embeddings using HuggingFace models
 
 from __future__ import annotations
 
+import threading
 from typing import Any
 
 from infrastructure.embeddings.protocol import (
@@ -14,6 +15,7 @@ from infrastructure.embeddings.protocol import (
     EmbeddingProviderUnavailableError,
 )
 
+_CACHE_LOCK = threading.Lock()
 _MODEL_CACHE: dict[str, Any] = {}
 
 
@@ -43,7 +45,10 @@ class HuggingFaceEmbeddingProvider(EmbeddingProvider):
             return self._dimensions
         model = self._get_model()
         if model is not None:
-            dim = model.get_sentence_embedding_dimension()
+            dim_getter = getattr(model, "get_embedding_dimension", None) or getattr(
+                model, "get_sentence_embedding_dimension", None
+            )
+            dim = dim_getter() if callable(dim_getter) else None
             if isinstance(dim, int):
                 self._dimensions = dim
                 return self._dimensions
@@ -59,8 +64,9 @@ class HuggingFaceEmbeddingProvider(EmbeddingProvider):
             return False
 
     def _get_model(self) -> Any:
-        if self._model_id in _MODEL_CACHE:
-            return _MODEL_CACHE[self._model_id]
+        with _CACHE_LOCK:
+            if self._model_id in _MODEL_CACHE:
+                return _MODEL_CACHE[self._model_id]
 
         try:
             from sentence_transformers import SentenceTransformer
@@ -71,7 +77,8 @@ class HuggingFaceEmbeddingProvider(EmbeddingProvider):
 
         try:
             model = SentenceTransformer(self._model_id, device=self._device)
-            _MODEL_CACHE[self._model_id] = model
+            with _CACHE_LOCK:
+                _MODEL_CACHE[self._model_id] = model
             dim_getter = getattr(model, "get_embedding_dimension", None) or getattr(
                 model, "get_sentence_embedding_dimension", None
             )

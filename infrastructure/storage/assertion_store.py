@@ -6,14 +6,16 @@ import json
 import os
 import sqlite3
 import threading
-from collections.abc import Generator
+from collections.abc import Generator, Sequence
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 from core.assertions.assertion import Assertion
 from core.assertions.assertion_state import AssertionStateEvent
+from core.assertions.attribute import AttributeAssertion
 from core.assertions.confidence import Confidence, ConfidenceMethod
+from core.assertions.literal import LiteralType, LiteralValue, canonical_literal
 from core.assertions.state import AssertionState
 from core.entities.context import Context
 from core.evidence.evidence import Evidence
@@ -74,7 +76,9 @@ class DurableAssertionStore:
             )
         return prov.model_dump_json()
 
-    def _insert_assertion(self, connection: sqlite3.Connection, assertion: Assertion) -> None:
+    def _insert_assertion(
+        self, connection: sqlite3.Connection, assertion: Assertion | AttributeAssertion
+    ) -> None:
         evidence_json = json.dumps(
             [e.model_dump(mode="json") for e in assertion.evidence], sort_keys=True
         )
@@ -83,26 +87,41 @@ class DurableAssertionStore:
         conf_val = assertion.confidence.score if assertion.confidence else None
         conf_method = assertion.confidence.method.value if assertion.confidence else None
 
+        if isinstance(assertion, AttributeAssertion):
+            object_id = ""
+            literal_value = canonical_literal(assertion.value)
+            literal_datatype = assertion.value.type.value
+            assertion_kind = "attribute"
+        else:
+            object_id = assertion.object.canonical
+            literal_value = None
+            literal_datatype = None
+            assertion_kind = "relational"
+
         connection.execute(
             """
             INSERT INTO assertions (
                 id, subject_id, predicate, object_id, status_at_creation,
                 confidence_value, confidence_method, evidence_json,
-                provenance_json, context_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                provenance_json, context_json,
+                literal_value, literal_datatype, assertion_kind
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO NOTHING
             """,
             (
                 assertion.id.canonical,
                 assertion.subject.canonical,
                 assertion.predicate,
-                assertion.object.canonical,
+                object_id,
                 assertion.status_at_creation.value,
                 conf_val,
                 conf_method,
                 evidence_json,
                 prov_json,
                 ctx_json,
+                literal_value,
+                literal_datatype,
+                assertion_kind,
             ),
         )
 
@@ -129,7 +148,7 @@ class DurableAssertionStore:
             ),
         )
 
-    def _row_to_assertion(self, row: sqlite3.Row) -> Assertion:
+    def _row_to_assertion(self, row: sqlite3.Row) -> Assertion | AttributeAssertion:
         conf = None
         if row["confidence_value"] is not None:
             method_str = row["confidence_method"] or ConfidenceMethod.UNSPECIFIED.value
@@ -145,6 +164,50 @@ class DurableAssertionStore:
 
         prov = Provenance.model_validate_json(row["provenance_json"])
         ctx = Context.model_validate_json(row["context_json"]) if row["context_json"] else None
+
+        # Determine if this row represents an AttributeAssertion
+        is_attribute = False
+        if "assertion_kind" in row.keys() and row["assertion_kind"] == "attribute":
+            is_attribute = True
+        elif "literal_value" in row.keys() and row["literal_value"] is not None:
+            is_attribute = True
+
+        if is_attribute:
+            datatype_str = (
+                row["literal_datatype"]
+                if ("literal_datatype" in row.keys() and row["literal_datatype"])
+                else LiteralType.STRING.value
+            )
+            lit_type = LiteralType(datatype_str)
+            raw_val = row["literal_value"]
+            val: str | int | float | bool | datetime
+            if raw_val is None:
+                val = ""
+            elif lit_type is LiteralType.INTEGER:
+                val = int(raw_val)
+            elif lit_type is LiteralType.FLOAT:
+                val = float(raw_val)
+            elif lit_type is LiteralType.BOOLEAN:
+                val = raw_val.lower() in ("true", "1")
+            elif lit_type is LiteralType.DATETIME:
+                dt = datetime.fromisoformat(raw_val)
+                val = dt.replace(tzinfo=UTC) if dt.tzinfo is None else dt
+            else:  # LiteralType.STRING
+                val = str(raw_val)
+
+            literal_val = LiteralValue(type=lit_type, value=val)
+
+            return AttributeAssertion(
+                id=Identifier.parse(row["id"]),
+                subject=Identifier.parse(row["subject_id"]),
+                predicate=row["predicate"],
+                value=literal_val,
+                status_at_creation=AssertionState(row["status_at_creation"]),
+                confidence=conf,
+                evidence=tuple(evidence_list),
+                provenance=prov,
+                context=ctx,
+            )
 
         return Assertion(
             id=Identifier.parse(row["id"]),
@@ -172,8 +235,8 @@ class DurableAssertionStore:
             timestamp=datetime.fromisoformat(row["timestamp"]),
         )
 
-    def persist_assertion(self, assertion: Assertion) -> None:
-        """Persist a single assertion."""
+    def persist_assertion(self, assertion: Assertion | AttributeAssertion) -> None:
+        """Persist a single relational or attribute assertion."""
         with self._lock, self._session() as connection:
             self._insert_assertion(connection, assertion)
             connection.commit()
@@ -184,7 +247,13 @@ class DurableAssertionStore:
             self._insert_event(connection, event)
             connection.commit()
 
-    def persist_batch(self, assertions: list[Assertion], events: list[AssertionStateEvent]) -> None:
+    append_state_event = persist_state_event
+
+    def persist_batch(
+        self,
+        assertions: Sequence[Assertion | AttributeAssertion],
+        events: Sequence[AssertionStateEvent],
+    ) -> None:
         """Persist multiple assertions and events in a single atomic transaction."""
         with self._lock, self._session() as connection:
             connection.execute("BEGIN IMMEDIATE")
@@ -198,7 +267,9 @@ class DurableAssertionStore:
                 connection.rollback()
                 raise
 
-    def get_assertion(self, assertion_id: Identifier | str) -> Assertion | None:
+    def get_assertion(
+        self, assertion_id: Identifier | str
+    ) -> Assertion | AttributeAssertion | None:
         """Load an assertion by identifier."""
         canonical_id = (
             assertion_id.canonical if isinstance(assertion_id, Identifier) else assertion_id
@@ -228,7 +299,9 @@ class DurableAssertionStore:
             ).fetchall()
             return [self._row_to_event(r) for r in rows]
 
-    def get_by_source_artifact(self, artifact_id: Identifier | str) -> list[Assertion]:
+    def get_by_source_artifact(
+        self, artifact_id: Identifier | str
+    ) -> list[Assertion | AttributeAssertion]:
         """Query assertions originating from a specific source artifact via indexed generated column.
 
         ``source_artifact_id`` is always stored with the full ``artifact:<value>`` prefix,
@@ -249,7 +322,7 @@ class DurableAssertionStore:
             ).fetchall()
             return [self._row_to_assertion(r) for r in rows]
 
-    def get_by_graph_origin(self, graph_origin_id: str) -> list[Assertion]:
+    def get_by_graph_origin(self, graph_origin_id: str) -> list[Assertion | AttributeAssertion]:
         """Query assertions originating from a specific graph origin ID."""
         with self._lock, self._session() as connection:
             rows = connection.execute(
@@ -273,7 +346,7 @@ class DurableAssertionStore:
                 [(release_id, aid) for aid in assertion_ids],
             )
 
-    def get_by_release(self, release_id: str) -> list[Assertion]:
+    def get_by_release(self, release_id: str) -> list[Assertion | AttributeAssertion]:
         """Fetch all assertions associated with a release_id."""
         with self._lock, self._session() as connection:
             rows = connection.execute(
@@ -285,4 +358,21 @@ class DurableAssertionStore:
                 """,
                 (release_id,),
             ).fetchall()
+            return [self._row_to_assertion(r) for r in rows]
+
+    def query_assertions(
+        self, predicate_pattern: str | None = None, limit: int = 100
+    ) -> list[Assertion | AttributeAssertion]:
+        """Query assertions matching an optional predicate substring or pattern."""
+        with self._lock, self._session() as connection:
+            if predicate_pattern:
+                rows = connection.execute(
+                    "SELECT * FROM assertions WHERE predicate LIKE ? LIMIT ?",
+                    (f"%{predicate_pattern}%", limit),
+                ).fetchall()
+            else:
+                rows = connection.execute(
+                    "SELECT * FROM assertions LIMIT ?",
+                    (limit,),
+                ).fetchall()
             return [self._row_to_assertion(r) for r in rows]

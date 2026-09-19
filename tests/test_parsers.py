@@ -99,3 +99,15 @@ def test_csv_empty_content_yields_no_records() -> None:
 def test_csv_header_only_yields_no_records() -> None:
     records = CsvParser().parse(b"a,b\n", artifact_id=ARTIFACT_ID, parsed_at=PARSED_AT)
     assert records == []
+
+
+def test_jsonld_edge_missing_endpoint_raises_parsing_error() -> None:
+    import json
+
+    import pytest
+
+    from core.parsing.parsers import JsonLdParser, ParsingError
+
+    content = json.dumps({"edges": [{"predicate": "causes"}]}).encode("utf-8")
+    with pytest.raises(ParsingError, match="missing required subject"):
+        JsonLdParser().parse(content, artifact_id=ARTIFACT_ID, parsed_at=PARSED_AT)

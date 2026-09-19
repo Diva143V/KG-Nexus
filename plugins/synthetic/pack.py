@@ -8,11 +8,12 @@ from __future__ import annotations
 
 from typing import Any
 
+from plugins.synthetic.config import get_synthetic_preset
 from plugins.synthetic.entities import Organization, Person
 from plugins.synthetic.policies import SyntheticEvidencePolicy, SyntheticIdentityPolicy
 from plugins.synthetic.projections import SyntheticProjectionProfile
 from plugins.synthetic.relations import LOCATED_IN_CONTRACT, LocatedInRelation
-from sdk.domain_config import DomainFusionConfig, get_synthetic_preset
+from sdk.domain_config import DomainFusionConfig
 from sdk.manifest import PluginManifest
 
 

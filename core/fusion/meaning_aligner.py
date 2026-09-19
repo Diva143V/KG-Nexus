@@ -11,12 +11,17 @@ Responsibilities:
 
 from __future__ import annotations
 
+import hashlib
+import re
+from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Any
 
 from core.assertions.assertion import Assertion
 from core.fusion.candidate_finder import EnhancedCandidateMatch
 from core.fusion.normalizer import NormalizedGraph, extract_local_name
+from core.identifiers.identifier import Identifier
+from core.provenance.provenance import AssertionOrigin
 from sdk.domain_config import DomainFusionConfig, MappingDirection, MeaningMapping
 
 
@@ -36,35 +41,41 @@ class MeaningAligner:
 
     def __init__(self, domain_config: DomainFusionConfig) -> None:
         self.domain_config = domain_config
-        self._class_map = self._build_mapping_lookup(
+        self._class_map: dict[tuple[str, str], list[MeaningMapping]] = self._build_mapping_lookup(
             self.domain_config.meaning_alignment.class_mappings
         )
-        self._rel_map = self._build_mapping_lookup(
+        self._rel_map: dict[tuple[str, str], list[MeaningMapping]] = self._build_mapping_lookup(
             self.domain_config.meaning_alignment.relation_mappings
         )
-        self._attr_map = self._build_mapping_lookup(
+        self._attr_map: dict[tuple[str, str], list[MeaningMapping]] = self._build_mapping_lookup(
             self.domain_config.meaning_alignment.attribute_mappings
         )
 
     def _build_mapping_lookup(
         self, mappings: tuple[MeaningMapping, ...]
-    ) -> dict[tuple[str, str], MeaningMapping]:
-        lookup: dict[tuple[str, str], MeaningMapping] = {}
+    ) -> dict[tuple[str, str], list[MeaningMapping]]:
+        lookup: dict[tuple[str, str], list[MeaningMapping]] = defaultdict(list)
         for m in mappings:
             s_clean = extract_local_name(m.source_concept).lower()
             t_clean = extract_local_name(m.target_concept).lower()
 
             if m.direction in (MappingDirection.EQUIVALENT, MappingDirection.CANONICAL):
                 # Normalize both sides using extract_local_name for consistent key format
-                lookup[(s_clean, "graph_a")] = m
-                lookup[(s_clean, "graph_b")] = m
-                lookup[(t_clean, "graph_a")] = m
-                lookup[(t_clean, "graph_b")] = m
+                if m not in lookup[(s_clean, "graph_a")]:
+                    lookup[(s_clean, "graph_a")].append(m)
+                if m not in lookup[(s_clean, "graph_b")]:
+                    lookup[(s_clean, "graph_b")].append(m)
+                if m not in lookup[(t_clean, "graph_a")]:
+                    lookup[(t_clean, "graph_a")].append(m)
+                if m not in lookup[(t_clean, "graph_b")]:
+                    lookup[(t_clean, "graph_b")].append(m)
             elif m.direction == MappingDirection.DIRECTED_A_TO_B:
-                lookup[(s_clean, "graph_a")] = m
+                if m not in lookup[(s_clean, "graph_a")]:
+                    lookup[(s_clean, "graph_a")].append(m)
             elif m.direction == MappingDirection.DIRECTED_B_TO_A:
-                lookup[(s_clean, "graph_b")] = m
-        return lookup
+                if m not in lookup[(s_clean, "graph_b")]:
+                    lookup[(s_clean, "graph_b")].append(m)
+        return dict(lookup)
 
     def align_predicate(
         self, predicate_str: str, from_graph: str = "graph_a"
@@ -73,20 +84,30 @@ class MeaningAligner:
         p_local = extract_local_name(predicate_str).lower()
         fg = from_graph.lower()
         key = (p_local, fg)
-        if key in self._rel_map:
-            mapping = self._rel_map[key]
+        if key in self._rel_map and self._rel_map[key]:
+            mapping = max(self._rel_map[key], key=lambda m: m.confidence)
             return mapping.target_concept, mapping
 
         # If from_graph is a custom identifier, check role-based fallback without violating directionality
         if fg not in ("graph_a", "graph_b"):
-            if "a" in fg and (p_local, "graph_a") in self._rel_map:
-                return self._rel_map[(p_local, "graph_a")].target_concept, self._rel_map[
-                    (p_local, "graph_a")
-                ]
-            if "b" in fg and (p_local, "graph_b") in self._rel_map:
-                return self._rel_map[(p_local, "graph_b")].target_concept, self._rel_map[
-                    (p_local, "graph_b")
-                ]
+            is_a = (
+                fg in ("a", "graph_a")
+                or fg.endswith(("_a", ".a", ":a"))
+                or fg.startswith(("a_", "a.", "a:"))
+            )
+            is_b = (
+                fg in ("b", "graph_b")
+                or fg.endswith(("_b", ".b", ":b"))
+                or fg.startswith(("b_", "b.", "b:"))
+            )
+            if is_a and not is_b:
+                if (p_local, "graph_a") in self._rel_map and self._rel_map[(p_local, "graph_a")]:
+                    mapping = max(self._rel_map[(p_local, "graph_a")], key=lambda m: m.confidence)
+                    return mapping.target_concept, mapping
+            elif is_b and not is_a:
+                if (p_local, "graph_b") in self._rel_map and self._rel_map[(p_local, "graph_b")]:
+                    mapping = max(self._rel_map[(p_local, "graph_b")], key=lambda m: m.confidence)
+                    return mapping.target_concept, mapping
 
         return predicate_str, None
 
@@ -97,20 +118,30 @@ class MeaningAligner:
         a_local = extract_local_name(attr_str).lower()
         fg = from_graph.lower()
         key = (a_local, fg)
-        if key in self._attr_map:
-            mapping = self._attr_map[key]
+        if key in self._attr_map and self._attr_map[key]:
+            mapping = max(self._attr_map[key], key=lambda m: m.confidence)
             return mapping.target_concept, mapping
 
         # If from_graph is a custom identifier, check role-based fallback without violating directionality
         if fg not in ("graph_a", "graph_b"):
-            if "a" in fg and (a_local, "graph_a") in self._attr_map:
-                return self._attr_map[(a_local, "graph_a")].target_concept, self._attr_map[
-                    (a_local, "graph_a")
-                ]
-            if "b" in fg and (a_local, "graph_b") in self._attr_map:
-                return self._attr_map[(a_local, "graph_b")].target_concept, self._attr_map[
-                    (a_local, "graph_b")
-                ]
+            is_a = (
+                fg in ("a", "graph_a")
+                or fg.endswith(("_a", ".a", ":a"))
+                or fg.startswith(("a_", "a.", "a:"))
+            )
+            is_b = (
+                fg in ("b", "graph_b")
+                or fg.endswith(("_b", ".b", ":b"))
+                or fg.startswith(("b_", "b.", "b:"))
+            )
+            if is_a and not is_b:
+                if (a_local, "graph_a") in self._attr_map and self._attr_map[(a_local, "graph_a")]:
+                    mapping = max(self._attr_map[(a_local, "graph_a")], key=lambda m: m.confidence)
+                    return mapping.target_concept, mapping
+            elif is_b and not is_a:
+                if (a_local, "graph_b") in self._attr_map and self._attr_map[(a_local, "graph_b")]:
+                    mapping = max(self._attr_map[(a_local, "graph_b")], key=lambda m: m.confidence)
+                    return mapping.target_concept, mapping
 
         return attr_str, None
 
@@ -132,17 +163,47 @@ class MeaningAligner:
                 for d in self.domain_config.meaning_alignment.disjoint_classes
             }
         )
+        known_classes = {c for pair in disjoint_pairs for c in pair} | {
+            et.name.lower() for et in self.domain_config.entity_types
+        }
 
         def get_entity_type_names(ent: Any) -> set[str]:
             types = {str(ent.kind.value).lower()}
             if hasattr(ent, "label") and ent.label:
-                types.add(str(ent.label).lower())
-            val_lower = str(ent.id.value).lower()
+                lbl_lower = str(ent.label).lower()
+                if lbl_lower in known_classes:
+                    types.add(lbl_lower)
+            val_parts = [str(getattr(ent.id, "value", "")).lower()]
+            if hasattr(ent.id, "namespace") and ent.id.namespace:
+                val_parts.append(str(ent.id.namespace).lower())
+            if hasattr(ent.id, "canonical") and ent.id.canonical:
+                val_parts.append(str(ent.id.canonical).lower())
+            val_parts.append(str(ent.id).lower())
+            val_lower = " ".join(val_parts)
+            val_tokens = set(re.split(r"[/:\#_\-\s\.]+", val_lower))
+
+            def _matches_token(name: str) -> bool:
+                name_clean = name.rstrip("s")
+                for tok in val_tokens:
+                    if tok == name or tok.rstrip("s") == name_clean:
+                        return True
+                    if tok.endswith("ies") and tok[:-3] + "y" == name:
+                        return True
+                return False
+
             for et in self.domain_config.entity_types:
-                if et.name.lower() in val_lower or any(
-                    p.lower() in val_lower for p in et.namespace_prefixes
-                ):
-                    types.add(et.name.lower())
+                et_name = et.name.lower()
+                prefixes = {p.lower() for p in et.namespace_prefixes}
+                if _matches_token(et_name) or any(_matches_token(p) for p in prefixes):
+                    types.add(et_name)
+            # Recognize ontology concepts declared in class mappings
+            for m in self.domain_config.meaning_alignment.class_mappings:
+                s_name = extract_local_name(m.source_concept).lower()
+                t_name = extract_local_name(m.target_concept).lower()
+                if _matches_token(s_name):
+                    types.add(s_name)
+                if _matches_token(t_name):
+                    types.add(t_name)
             return types
 
         for cand in candidates:
@@ -169,32 +230,53 @@ class MeaningAligner:
                 result.rejected_due_to_meaning.append((cand, reason))
                 continue
 
-            # Check if class mapping applies
-            # Note: Mapping lookup keys are built as (concept_name_lower, "graph_a" | "graph_b")
-            # using extract_local_name for consistent key format
+            # Symmetric Class Mapping Validation:
+            # Check both source entity types (Graph A) and candidate entity types (Graph B)
+            # against the class mapping multimap, strictly respecting mapping directionality.
+            s_norm_types = {
+                extract_local_name(st).lower() if isinstance(st, str) else str(st).lower()
+                for st in s_types
+            }
+            t_norm_types = {
+                extract_local_name(tt).lower() if isinstance(tt, str) else str(tt).lower()
+                for tt in t_types
+            }
+
             cand_mappings_applied: list[str] = []
-            for st in s_types:
-                # Normalize st using extract_local_name to match mapping key format
-                st_normalized = (
-                    extract_local_name(st).lower() if isinstance(st, str) else str(st).lower()
-                )
-                # Check both graph_a and graph_b keys for EQUIVALENT mappings
-                class_key_a = (st_normalized, "graph_a")
-                class_key_b = (st_normalized, "graph_b")
-                if class_key_a in self._class_map:
-                    m = self._class_map[class_key_a]
-                    cand_mappings_applied.append(
-                        f"Class mapping: {m.source_concept} ↔ {m.target_concept}"
-                    )
-                    result.mappings_applied_count += 1
-                    break
-                elif class_key_b in self._class_map:
-                    m = self._class_map[class_key_b]
-                    cand_mappings_applied.append(
-                        f"Class mapping: {m.source_concept} ↔ {m.target_concept}"
-                    )
-                    result.mappings_applied_count += 1
-                    break
+
+            # 1. Check mappings originating from Graph A (s_types)
+            for st_norm in s_norm_types:
+                class_key_a = (st_norm, "graph_a")
+                for m in self._class_map.get(class_key_a, []):
+                    s_clean = extract_local_name(m.source_concept).lower()
+                    t_clean = extract_local_name(m.target_concept).lower()
+
+                    if m.direction in (MappingDirection.EQUIVALENT, MappingDirection.CANONICAL):
+                        expected_target = t_clean if st_norm == s_clean else s_clean
+                        if expected_target in t_norm_types:
+                            mapping_str = f"Class mapping: {m.source_concept} ↔ {m.target_concept}"
+                            if mapping_str not in cand_mappings_applied:
+                                cand_mappings_applied.append(mapping_str)
+                                result.mappings_applied_count += 1
+                    elif m.direction == MappingDirection.DIRECTED_A_TO_B:
+                        if st_norm == s_clean and t_clean in t_norm_types:
+                            mapping_str = f"Class mapping: {m.source_concept} ↔ {m.target_concept}"
+                            if mapping_str not in cand_mappings_applied:
+                                cand_mappings_applied.append(mapping_str)
+                                result.mappings_applied_count += 1
+
+            # 2. Check mappings originating from Graph B for DIRECTED_B_TO_A (t_types -> s_types)
+            for tt_norm in t_norm_types:
+                class_key_b = (tt_norm, "graph_b")
+                for m in self._class_map.get(class_key_b, []):
+                    if m.direction == MappingDirection.DIRECTED_B_TO_A:
+                        s_clean = extract_local_name(m.source_concept).lower()
+                        t_clean = extract_local_name(m.target_concept).lower()
+                        if tt_norm == s_clean and t_clean in s_norm_types:
+                            mapping_str = f"Class mapping: {m.source_concept} ↔ {m.target_concept}"
+                            if mapping_str not in cand_mappings_applied:
+                                cand_mappings_applied.append(mapping_str)
+                                result.mappings_applied_count += 1
 
             if cand_mappings_applied:
                 if hasattr(cand, "evidence") and isinstance(cand.evidence, list):
@@ -225,12 +307,27 @@ class MeaningAligner:
             pred_str = str(a.predicate)
             aligned_pred, mapping = self.align_predicate(pred_str, from_graph=graph_name)
             if mapping is not None:
+                derived_hash = hashlib.sha256(
+                    f"{a.id.canonical}:{aligned_pred}:{a.subject.canonical}:{a.object.canonical}".encode()
+                ).hexdigest()[:16]
+                derived_id = Identifier(namespace="ASSERT", value=f"aligned_{derived_hash}")
+                aligned_prov = a.provenance.model_copy(
+                    update={
+                        "assertion_origin": AssertionOrigin.DERIVED,
+                        "input_assertion_refs": (a.id,),
+                        "derivation_method": "meaning_alignment",
+                    }
+                )
                 aligned_a = Assertion(
-                    id=a.id,
+                    id=derived_id,
                     subject=a.subject,
                     predicate=aligned_pred,
                     object=a.object,
-                    provenance=a.provenance,
+                    context=a.context,
+                    confidence=a.confidence,
+                    evidence=a.evidence,
+                    provenance=aligned_prov,
+                    status_at_creation=a.status_at_creation,
                 )
                 aligned_assertions.append(aligned_a)
                 if result is not None:
@@ -261,12 +358,27 @@ class MeaningAligner:
             attr_str = str(a.predicate)
             aligned_attr, mapping = self.align_attribute(attr_str, from_graph=graph_name)
             if mapping is not None:
+                derived_hash = hashlib.sha256(
+                    f"{a.id.canonical}:{aligned_attr}:{a.subject.canonical}:{a.object.canonical}".encode()
+                ).hexdigest()[:16]
+                derived_id = Identifier(namespace="ASSERT", value=f"aligned_{derived_hash}")
+                aligned_prov = a.provenance.model_copy(
+                    update={
+                        "assertion_origin": AssertionOrigin.DERIVED,
+                        "input_assertion_refs": (a.id,),
+                        "derivation_method": "meaning_alignment",
+                    }
+                )
                 aligned_a = Assertion(
-                    id=a.id,
+                    id=derived_id,
                     subject=a.subject,
                     predicate=aligned_attr,
                     object=a.object,
-                    provenance=a.provenance,
+                    context=a.context,
+                    confidence=a.confidence,
+                    evidence=a.evidence,
+                    provenance=aligned_prov,
+                    status_at_creation=a.status_at_creation,
                 )
                 aligned_assertions.append(aligned_a)
                 if result is not None:

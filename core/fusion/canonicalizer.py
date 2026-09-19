@@ -10,12 +10,21 @@ Responsibilities:
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass, field
 from typing import Any
 
 from core.assertions.assertion import Assertion
-from core.fusion.normalizer import NormalizedGraph, extract_local_name
+from core.entities.entity import Entity, EntityKind
+from core.evidence.evidence import Evidence
+from core.fusion.normalizer import (
+    NormalizedGraph,
+    extract_local_name,
+    is_literal_value,
+    normalize_literal_format,
+)
 from core.identifiers.identifier import Identifier
+from core.provenance.provenance import AssertionOrigin, Provenance
 from sdk.domain_config import DomainFusionConfig
 
 
@@ -132,10 +141,19 @@ class Canonicalizer:
                 clusters[root] = []
             clusters[root].append(eid)
 
-        {et.name.lower(): et for et in self.domain_config.entity_types}
-
         for canon_id, members in clusters.items():
-            primary_ent = all_entities[canon_id]
+            if canon_id in all_entities:
+                primary_ent = all_entities[canon_id]
+            else:
+                available = [m for m in members if m in all_entities]
+                if available:
+                    primary_ent = all_entities[available[0]]
+                else:
+                    primary_ent = Entity(
+                        id=Identifier(namespace="ENTITY", value=canon_id),
+                        kind=EntityKind.CONCEPT,
+                        label=extract_local_name(canon_id),
+                    )
             clean_label = primary_ent.label if primary_ent.label else extract_local_name(canon_id)
 
             # Determine color & group from domain config
@@ -167,36 +185,108 @@ class Canonicalizer:
 
         result.canonical_entities_count = len(result.canonical_entities)
 
-        # Attach normalized literal properties to canonical entities
-        all_lit_props: dict[
-            tuple[str, str, str], list[Any]
-        ] = {}  # (subject, predicate_local, source_graph) -> values
-        for prop_key, values in graph_a.literal_properties.items():
-            s_orig = prop_key[0]
-            p_local = prop_key[1]
-            all_lit_props.setdefault((s_orig, p_local, "graph_a"), []).extend(values)
-        for prop_key, values in graph_b.literal_properties.items():
-            s_orig = prop_key[0]
-            p_local = prop_key[1]
-            all_lit_props.setdefault((s_orig, p_local, "graph_b"), []).extend(values)
+        # Resolve graph names from caller parameters or fallback to graph attributes
+        g_a_name = (
+            graph_a_id.value
+            if isinstance(graph_a_id, Identifier)
+            else (str(graph_a_id) if graph_a_id else getattr(graph_a, "graph_id", "graph_a"))
+        )
+        g_b_name = (
+            graph_b_id.value
+            if isinstance(graph_b_id, Identifier)
+            else (str(graph_b_id) if graph_b_id else getattr(graph_b, "graph_id", "graph_b"))
+        )
 
-        for (s_orig, p_local, source_graph), vals in all_lit_props.items():
+        # --------------------------------------------------------------------
+        # Extract and canonicalize literal properties from aligned assertions
+        # --------------------------------------------------------------------
+        def _process_aligned_literal_assertions(
+            assertions: list[Assertion], source_graph_name: str
+        ) -> None:
+            for a in assertions:
+                is_lit = False
+                val_raw = ""
+                if hasattr(a, "value") and not hasattr(a, "object"):
+                    is_lit = True
+                    val_raw = str(a.value.value)
+                else:
+                    pred_str = str(a.predicate)
+                    obj_val = str(a.object.value)
+                    if is_literal_value(pred_str, obj_val, self.domain_config.literal_rules):
+                        is_lit = True
+                        val_raw = obj_val
+
+                if not is_lit:
+                    continue
+
+                norm_val = normalize_literal_format(val_raw, self.domain_config.literal_rules)
+                p_local = extract_local_name(str(a.predicate))
+                s_orig = str(a.subject.value)
+                canon_id = alias_map.get(s_orig, s_orig)
+
+                if canon_id in result.canonical_entities:
+                    c_props = result.canonical_entities[canon_id]["properties"]
+                    c_lit_props = result.canonical_entities[canon_id]["literal_properties"]
+                    if p_local not in c_lit_props:
+                        c_lit_props[p_local] = []
+
+                    prov = a.provenance
+                    if prov.graph_origin_id is None:
+                        prov = prov.model_copy(update={"graph_origin_id": source_graph_name})
+
+                    entry = {
+                        "value": norm_val,
+                        "source_graph": source_graph_name,
+                        "provenance": prov,
+                        "raw_value": val_raw,
+                    }
+
+                    if not any(
+                        e["value"] == norm_val and e["source_graph"] == source_graph_name
+                        for e in c_lit_props[p_local]
+                    ):
+                        c_lit_props[p_local].append(entry)
+
+                    raw_values = [e["value"] for e in c_lit_props[p_local]]
+                    c_props[p_local] = raw_values[0] if len(raw_values) == 1 else list(raw_values)
+
+        _process_aligned_literal_assertions(aligned_assertions_a, g_a_name)
+        _process_aligned_literal_assertions(aligned_assertions_b, g_b_name)
+
+        # Fallback for any unaligned literal properties present on NormalizedGraph
+        fallback_lit_props: dict[tuple[str, str, str], list[Any]] = {}
+        for prop_key, values in graph_a.literal_properties.items():
+            fallback_lit_props.setdefault((prop_key[0], prop_key[1], g_a_name), []).extend(values)
+        for prop_key, values in graph_b.literal_properties.items():
+            fallback_lit_props.setdefault((prop_key[0], prop_key[1], g_b_name), []).extend(values)
+
+        for (s_orig, p_local, source_graph_name), vals in fallback_lit_props.items():
             canon_id = alias_map.get(s_orig, s_orig)
             if canon_id in result.canonical_entities:
                 c_props = result.canonical_entities[canon_id]["properties"]
                 c_lit_props = result.canonical_entities[canon_id]["literal_properties"]
                 if p_local not in c_lit_props:
                     c_lit_props[p_local] = []
-                # Track source graph provenance with each value
                 for v in vals:
-                    v_entry = (v, source_graph)
-                    if v_entry not in c_lit_props[p_local]:
-                        c_lit_props[p_local].append(v_entry)
-                raw_values = [v for v, _ in c_lit_props[p_local]]
+                    if not any(
+                        e["value"] == v and e["source_graph"] == source_graph_name
+                        for e in c_lit_props[p_local]
+                    ):
+                        c_lit_props[p_local].append(
+                            {
+                                "value": v,
+                                "source_graph": source_graph_name,
+                                "provenance": None,
+                                "raw_value": str(v),
+                            }
+                        )
+                raw_values = [e["value"] for e in c_lit_props[p_local]]
                 c_props[p_local] = raw_values[0] if len(raw_values) == 1 else list(raw_values)
 
-        # Redirect source edges to canonical nodes
-        def redirect_assertion(a: Assertion) -> Assertion:
+        # --------------------------------------------------------------------
+        # Edge Redirection with Deterministic IDs and Metadata Retention
+        # --------------------------------------------------------------------
+        def redirect_assertion(a: Assertion, source_graph_name: str) -> Assertion:
             s_raw = a.subject.value
             o_raw = a.object.value
             s_canon = alias_map.get(s_raw, s_raw)
@@ -205,17 +295,154 @@ class Canonicalizer:
             if s_canon == s_raw and o_canon == o_raw:
                 return a
 
-            return Assertion(
-                id=a.id,
-                subject=Identifier(namespace=a.subject.namespace, value=s_canon),
-                predicate=a.predicate,
-                object=Identifier(namespace=a.object.namespace, value=o_canon),
-                provenance=a.provenance,
+            # Resolve canonical namespace if target entities exist in graph
+            s_ns = (
+                all_entities[s_canon].id.namespace
+                if s_canon in all_entities
+                else a.subject.namespace
+            )
+            o_ns = (
+                all_entities[o_canon].id.namespace
+                if o_canon in all_entities
+                else a.object.namespace
             )
 
-        all_aligned_assertions = [redirect_assertion(a) for a in aligned_assertions_a] + [
-            redirect_assertion(a) for a in aligned_assertions_b
-        ]
+            # Deterministic hash-derived ID: ASSERT:canon_<sha256[:16]>
+            hash_input = f"{a.id.canonical}:{s_canon}:{a.predicate}:{o_canon}".encode()
+            canon_hash = hashlib.sha256(hash_input).hexdigest()[:16]
+            redirected_id = Identifier(namespace="ASSERT", value=f"canon_{canon_hash}")
 
-        result.canonicalized_assertions = all_aligned_assertions
+            # Structured derived provenance tracking
+            redirected_prov = Provenance(
+                assertion_origin=AssertionOrigin.DERIVED,
+                agent_id=a.provenance.agent_id,
+                activity_id=a.provenance.activity_id,
+                asserted_at=a.provenance.asserted_at,
+                method=a.provenance.method,
+                input_assertion_refs=(a.id,),
+                input_resource_refs=a.provenance.input_resource_refs,
+                derivation_method="canonical_edge_redirection",
+                source_artifact_id=a.provenance.source_artifact_id,
+                graph_origin_id=a.provenance.graph_origin_id or source_graph_name,
+            )
+
+            # Preserve all metadata: confidence, evidence, context, status_at_creation
+            return Assertion(
+                id=redirected_id,
+                subject=Identifier(namespace=s_ns, value=s_canon),
+                predicate=a.predicate,
+                object=Identifier(namespace=o_ns, value=o_canon),
+                context=a.context,
+                confidence=a.confidence,
+                evidence=a.evidence,
+                provenance=redirected_prov,
+                status_at_creation=a.status_at_creation,
+            )
+
+        # --------------------------------------------------------------------
+        # Deduplicate Identical Canonical Triples and Aggregate Provenance
+        # --------------------------------------------------------------------
+        redirected_assertions: list[Assertion] = [
+            redirect_assertion(a, g_a_name) for a in aligned_assertions_a
+        ] + [redirect_assertion(a, g_b_name) for a in aligned_assertions_b]
+
+        canonicalized: list[Assertion] = []
+        seen_triples: dict[tuple[str, str, str], Assertion] = {}
+        triple_to_idx: dict[tuple[str, str, str], int] = {}
+        dedup_count = 0
+
+        for a in redirected_assertions:
+            s_key = str(a.subject.value)
+            p_key = extract_local_name(str(a.predicate)).lower()
+            o_key = str(a.object.value)
+            triple_key = (s_key, p_key, o_key)
+
+            if triple_key not in seen_triples:
+                seen_triples[triple_key] = a
+                triple_to_idx[triple_key] = len(canonicalized)
+                canonicalized.append(a)
+            else:
+                dedup_count += 1
+                existing_a = seen_triples[triple_key]
+
+                # Aggregate input assertion references across both sources
+                def _get_input_refs(assertion: Assertion) -> list[Identifier]:
+                    if (
+                        assertion.provenance.assertion_origin == AssertionOrigin.DERIVED
+                        and assertion.provenance.input_assertion_refs
+                    ):
+                        return list(assertion.provenance.input_assertion_refs)
+                    return [assertion.id]
+
+                merged_refs = tuple(dict.fromkeys(_get_input_refs(existing_a) + _get_input_refs(a)))
+
+                # Merge input resource references
+                merged_resource_refs = tuple(
+                    dict.fromkeys(
+                        existing_a.provenance.input_resource_refs + a.provenance.input_resource_refs
+                    )
+                )
+
+                # Merge evidence (deduplicate by canonical evidence ID)
+                seen_ev_ids: set[str] = set()
+                merged_ev_list: list[Evidence] = []
+                for ev in existing_a.evidence + a.evidence:
+                    if ev.id.canonical not in seen_ev_ids:
+                        seen_ev_ids.add(ev.id.canonical)
+                        merged_ev_list.append(ev)
+                merged_evidence = tuple(merged_ev_list)
+
+                # Calibrate confidence: retain higher score
+                merged_confidence = existing_a.confidence
+                if a.confidence is not None:
+                    if merged_confidence is None or a.confidence.score > merged_confidence.score:
+                        merged_confidence = a.confidence
+
+                # Deterministic merged assertion ID
+                sorted_refs_str = ",".join(sorted(r.canonical for r in merged_refs))
+                merged_hash_input = f"{existing_a.subject.canonical}:{existing_a.predicate}:{existing_a.object.canonical}:{sorted_refs_str}".encode()
+                merged_hash = hashlib.sha256(merged_hash_input).hexdigest()[:16]
+                merged_id = Identifier(namespace="ASSERT", value=f"canon_{merged_hash}")
+
+                # Combine origin graphs
+                orig_graphs = [
+                    g
+                    for g in [existing_a.provenance.graph_origin_id, a.provenance.graph_origin_id]
+                    if g
+                ]
+                merged_graph_origin = "+".join(dict.fromkeys(orig_graphs)) if orig_graphs else None
+
+                merged_prov = Provenance(
+                    assertion_origin=AssertionOrigin.DERIVED,
+                    agent_id=existing_a.provenance.agent_id,
+                    activity_id=existing_a.provenance.activity_id,
+                    asserted_at=existing_a.provenance.asserted_at,
+                    method=existing_a.provenance.method or a.provenance.method,
+                    input_assertion_refs=merged_refs,
+                    input_resource_refs=merged_resource_refs,
+                    derivation_method="canonical_deduplication",
+                    source_artifact_id=existing_a.provenance.source_artifact_id
+                    or a.provenance.source_artifact_id,
+                    graph_origin_id=merged_graph_origin,
+                )
+
+                merged_assertion = Assertion(
+                    id=merged_id,
+                    subject=existing_a.subject,
+                    predicate=existing_a.predicate,
+                    object=existing_a.object,
+                    context=existing_a.context or a.context,
+                    confidence=merged_confidence,
+                    evidence=merged_evidence,
+                    provenance=merged_prov,
+                    status_at_creation=existing_a.status_at_creation,
+                )
+
+                seen_triples[triple_key] = merged_assertion
+                idx = triple_to_idx[triple_key]
+                canonicalized[idx] = merged_assertion
+
+        result.canonicalized_assertions = canonicalized
+        result.deduplicated_facts_count = dedup_count
+        result.complementary_facts_count = len(canonicalized)
         return result

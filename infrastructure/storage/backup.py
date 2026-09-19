@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 
 def backup_database(db_path: Path | str, backup_path: Path | str) -> None:
@@ -16,8 +19,8 @@ def backup_database(db_path: Path | str, backup_path: Path | str) -> None:
     try:
         try:
             src_con.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("WAL checkpoint failed before backup of %s: %s", src, exc)
         dst_con = sqlite3.connect(dst)
         try:
             src_con.backup(dst_con)
@@ -43,7 +46,8 @@ def verify_backup(backup_path: Path | str) -> bool:
         cur = con.execute("PRAGMA integrity_check")
         rows = cur.fetchall()
         return bool(rows) and all(row[0] == "ok" for row in rows)
-    except Exception:
+    except Exception as exc:
+        logger.error("Backup verification failed for %s: %s", dst, exc, exc_info=True)
         return False
     finally:
         con.close()

@@ -356,3 +356,89 @@ def test_api_drug_repurposing_pipeline_execution(server_url):
         assert data["pipeline_type"] == "drug_repurposing"
         assert "hypotheses" in data
         assert isinstance(data["hypotheses"], list)
+
+
+def test_api_detected_diseases_endpoint(server_url):
+    """Verify /api/diseases/detected returns detected disease entities."""
+    req = urllib.request.Request(f"{server_url}/api/diseases/detected")
+    with urllib.request.urlopen(req) as resp:
+        assert resp.status == 200
+        data = json.loads(resp.read().decode("utf-8"))
+        assert data["status"] == "success"
+        assert "diseases" in data
+        assert isinstance(data["diseases"], list)
+        assert "count" in data
+        assert data["count"] == len(data["diseases"])
+
+
+def test_api_alignment_decision_persistence(server_url):
+    """Verify /api/alignment/decision records append-only AssertionStateEvent in store."""
+    payload = json.dumps(
+        {
+            "source_entity": "HGNC:6018",
+            "candidate_entity": "UniProt:P01308",
+            "decision": "SAME",
+            "reason": "Expert confirmed identical biological entity",
+            "confidence": 0.98,
+        }
+    ).encode("utf-8")
+    req = urllib.request.Request(
+        f"{server_url}/api/alignment/decision",
+        data=payload,
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(req) as resp:
+        assert resp.status == 200
+        data = json.loads(resp.read().decode("utf-8"))
+        assert data["status"] == "success"
+        assert "event_id" in data
+        assert data["to_state"] == "approved"
+        ass_id = data["assertion_id"]
+
+    # Verify event retrieval through assertions endpoint
+    get_req = urllib.request.Request(f"{server_url}/api/assertions/{urllib.parse.quote(ass_id)}")
+    with urllib.request.urlopen(get_req) as get_resp:
+        assert get_resp.status == 200
+        ass_data = json.loads(get_resp.read().decode("utf-8"))
+        assert ass_data["status"] == "success"
+        assert ass_data["current_state"] == "approved"
+        assert len(ass_data["events"]) >= 1
+
+
+def test_api_assertion_review_endpoint(server_url):
+    """Verify /api/assertions/{id}/review transitions assertion state."""
+    # First create a test assertion via decision
+    init_payload = json.dumps(
+        {
+            "source_entity": "TestGeneA",
+            "candidate_entity": "TestGeneB",
+            "decision": "REVIEW",
+            "reason": "Needs review",
+        }
+    ).encode("utf-8")
+    init_req = urllib.request.Request(
+        f"{server_url}/api/alignment/decision",
+        data=init_payload,
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(init_req) as init_resp:
+        init_data = json.loads(init_resp.read().decode("utf-8"))
+        ass_id = init_data["assertion_id"]
+
+    # Now transition state to REJECTED via review endpoint
+    review_payload = json.dumps(
+        {
+            "decision": "REJECT",
+            "reason": "Expert rejected equivalence",
+        }
+    ).encode("utf-8")
+    rev_req = urllib.request.Request(
+        f"{server_url}/api/assertions/{urllib.parse.quote(ass_id)}/review",
+        data=review_payload,
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(rev_req) as rev_resp:
+        assert rev_resp.status == 200
+        rev_data = json.loads(rev_resp.read().decode("utf-8"))
+        assert rev_data["status"] == "success"
+        assert rev_data["to_state"] == "rejected"

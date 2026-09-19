@@ -107,6 +107,14 @@ GEMINI.md
 audit*.md
 audit_prompt*.md
 systematic-debugging/
+Claude design/
+audit/
+*audit*.md
+*report*.md
+*remediation*.md
+REMEDIATION_REPORT.md
+AUDIT_REPORT_v2.md
+report.md
 
 # ==============================================================================
 # Graphify & Antigravity Integration

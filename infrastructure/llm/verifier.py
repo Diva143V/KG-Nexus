@@ -98,7 +98,7 @@ class Local8BVerifier:
                 parsed_json = json.loads(raw_output)
                 resp = LLMVerificationResponse.model_validate(parsed_json)
                 return resp, self.metadata
-            except (json.JSONDecodeError, ValidationError, Exception):
+            except (json.JSONDecodeError, ValidationError):
                 if attempt == self.max_retries:
                     # Fallback to ABSTAIN on invalid output
                     return (
@@ -106,6 +106,16 @@ class Local8BVerifier:
                             outcome=LLMOutcome.ABSTAIN,
                             confidence=0.0,
                             reason_codes=("INVALID_MODEL_OUTPUT_ABSTAINED",),
+                        ),
+                        self.metadata,
+                    )
+            except Exception:
+                if attempt == self.max_retries:
+                    return (
+                        LLMVerificationResponse(
+                            outcome=LLMOutcome.ABSTAIN,
+                            confidence=0.0,
+                            reason_codes=("MODEL_PROVIDER_UNAVAILABLE",),
                         ),
                         self.metadata,
                     )

@@ -19,8 +19,10 @@ from sdk.domain_config import (
     get_biomedical_preset,
     get_general_agnostic_preset,
     get_synthetic_preset,
+    register_domain_preset,
     resolve_domain_config,
 )
+from sdk.projection_backend import ProjectionBackend
 from sdk.source_resolver import DefaultSourceResolver, SourceResolverProtocol
 
 __all__ = [
@@ -35,11 +37,13 @@ __all__ = [
     "MatchStrategyConfig",
     "MeaningAlignmentConfig",
     "MeaningMapping",
+    "ProjectionBackend",
     "SourceIdentityConfig",
     "SourceResolverProtocol",
     "SourceSchemeRule",
     "get_biomedical_preset",
     "get_general_agnostic_preset",
     "get_synthetic_preset",
+    "register_domain_preset",
     "resolve_domain_config",
 ]

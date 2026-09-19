@@ -72,7 +72,7 @@ class TurtleParser:
             err_msg = str(exc)
             if "not bound" in err_msg.lower() or "prefix" in err_msg.lower():
                 try:
-                    fallback_headers = "@prefix EX: <http://example.org/> .\n@prefix exa: <http://biomed.example.org/a/> .\n@prefix exb: <http://pharm.example.org/b/> .\n"
+                    fallback_headers = "@prefix EX: <http://example.org/> .\n@prefix exa: <http://example.org/ns/a/> .\n@prefix exb: <http://example.org/ns/b/> .\n"
                     g.parse(data=fallback_headers + text, format="turtle")
                 except Exception:
                     raise ParsingError(f"Turtle parsing error: {exc}") from exc
@@ -138,6 +138,11 @@ class JsonLdParser:
                         or "related_to"
                     )
                     o = edge.get("to") or edge.get("object") or edge.get("dst")
+                    if not s or not o:
+                        raise ParsingError(
+                            f"Edge record {idx} missing required subject ('from'/'subject'/'src') "
+                            f"or object ('to'/'object'/'dst'): {edge}"
+                        )
                     records.append(
                         ParsedRecord(
                             id=record_id,

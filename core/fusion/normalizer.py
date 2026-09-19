@@ -80,15 +80,13 @@ def is_literal_value(
     """Determine if a triple object is a literal value rather than an entity node."""
     p_local = extract_local_name(predicate_name).lower()
 
-    # 1. Check if predicate is an identifier/attribute property (e.g. chembl_id, hgnc_id, molecularWeight)
+    # 1. Check if predicate is a generic structural identifier/attribute property
     if (
         p_local.endswith("_id")
         or p_local.endswith("_code")
         or p_local.endswith("id")
         or p_local.endswith("code")
-        or p_local.endswith("weight")
-        or p_local.endswith("formula")
-        or p_local in ("id", "code", "sku", "gtin", "upc", "uuid", "key", "formula")
+        or p_local in ("id", "code", "uuid", "key", "value")
     ):
         return True
 

@@ -46,12 +46,15 @@ def compute_policy_digest(config: DomainFusionConfig) -> str:
     return hashlib.sha256(config_json.encode()).hexdigest()[:16]
 
 
+UNKNOWN_FALLBACK_VALUE: str = "unknown"
+
+
 def get_project_version() -> str:
     """Read project version from pyproject.toml."""
     try:
         pyproject_path = Path(__file__).parent.parent.parent / "pyproject.toml"
         if pyproject_path.exists():
-            with open(pyproject_path) as f:
+            with open(pyproject_path, encoding="utf-8") as f:
                 for line in f:
                     if line.strip().startswith("version"):
                         # Extract version from "version = "0.0.0""
@@ -70,7 +73,7 @@ def parse_resource_identifier(
     """Parse a raw string, URI, or CURIE into a canonical Identifier in a domain-neutral manner."""
     clean = sanitize_id_value(raw_val, "")
     if not clean:
-        return Identifier(namespace=default_ns, value="unknown")
+        return Identifier(namespace=default_ns, value=UNKNOWN_FALLBACK_VALUE)
 
     # 1. Standard RFC 2141 URN: urn:<nid>:<nss>
     if clean.startswith("urn:"):
@@ -341,6 +344,7 @@ class GraphFusionService:
             derived_assertions_count=len(edges),
             nodes=nodes,
             edges=edges,
+            reconciled_assertions=tuple(res.reconciled_assertions),
             conflict_report=conflict_report,
             stage_breakdowns=stage_breakdowns,
             audit_report=audit_report,

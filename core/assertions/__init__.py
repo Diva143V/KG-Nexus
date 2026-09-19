@@ -3,7 +3,6 @@ from core.assertions.assertion_state import AssertionStateEvent
 from core.assertions.attribute import AttributeAssertion
 from core.assertions.confidence import Confidence, ConfidenceMethod
 from core.assertions.literal import LiteralType, LiteralValue
-from core.assertions.projection import ProjectionKind, ProjectionRecord
 from core.assertions.resolver import (
     AssertionStateResolver,
     CreationEventError,
@@ -33,8 +32,6 @@ __all__ = [
     "InvalidTransitionError",
     "LiteralType",
     "LiteralValue",
-    "ProjectionKind",
-    "ProjectionRecord",
     "StateMismatchError",
     "TransitionValidator",
 ]

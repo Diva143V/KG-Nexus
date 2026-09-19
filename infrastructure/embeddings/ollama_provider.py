@@ -90,11 +90,11 @@ class OllamaEmbeddingProvider(EmbeddingProvider):
             if e.code == 404:
                 return None  # Endpoint not supported on older Ollama, fall back
             raise EmbeddingProviderUnavailableError(
-                f"Ollama embedding request failed ({e.code}): {e.reason}"
+                f"Embedding provider unavailable: Ollama embedding request failed ({e.code}): {e.reason}"
             ) from e
         except Exception as e:
             raise EmbeddingProviderUnavailableError(
-                f"Ollama service unreachable at {self._base_url}: {e}"
+                f"Embedding provider unavailable: Ollama service unreachable at {self._base_url}: {e}"
             ) from e
         return None
 
@@ -115,16 +115,18 @@ class OllamaEmbeddingProvider(EmbeddingProvider):
                     raw_vec = data.get("embedding", [])
                     if not raw_vec:
                         raise EmbeddingProviderUnavailableError(
-                            f"Ollama returned empty embedding for model '{self._model_id}'."
+                            f"Embedding provider unavailable: Ollama returned empty embedding for model '{self._model_id}'."
                         )
                     if not self._detected_dimensions:
                         self._detected_dimensions = len(raw_vec)
                     return self._normalize_vector(raw_vec)
         except Exception as e:
             raise EmbeddingProviderUnavailableError(
-                f"Failed to obtain embedding from Ollama model '{self._model_id}': {e}"
+                f"Embedding provider unavailable: Failed to obtain embedding from Ollama model '{self._model_id}': {e}"
             ) from e
-        raise EmbeddingProviderUnavailableError("Ollama failed to produce embedding.")
+        raise EmbeddingProviderUnavailableError(
+            "Embedding provider unavailable: Ollama failed to produce embedding."
+        )
 
     def embed(self, texts: list[str]) -> list[tuple[float, ...]]:
         if not texts:

@@ -8,12 +8,29 @@ from __future__ import annotations
 
 import hashlib
 import re
-from collections.abc import Sequence
+import threading
+from collections.abc import Callable, Sequence
 from typing import Any
 
 from pydantic import ConfigDict, Field
 
 from core.resources.resource import Resource
+
+SchemeNormalizer = Callable[[str], str]
+_SCHEME_LOCK = threading.Lock()
+_SCHEME_NORMALIZERS: dict[str, SchemeNormalizer] = {}
+
+
+def register_scheme_normalizer(key: str, normalizer: SchemeNormalizer) -> None:
+    """Register a custom scheme or category URI normalizer callback."""
+    with _SCHEME_LOCK:
+        _SCHEME_NORMALIZERS[key.lower().strip()] = normalizer
+
+
+def get_scheme_normalizer(key: str) -> SchemeNormalizer | None:
+    """Retrieve registered normalizer callback for a scheme or category."""
+    with _SCHEME_LOCK:
+        return _SCHEME_NORMALIZERS.get(key.lower().strip())
 
 
 def compute_content_digest(content: bytes | str) -> str:
@@ -53,18 +70,15 @@ def normalize_source_uri(
     if expected_prefix and s.lower().startswith(expected_prefix.lower()):
         s = s[len(expected_prefix) :].strip()
 
-    # Format-specific standardization
-    if expected_prefix.lower().startswith("urn:patent:"):
-        s = re.sub(r"[,]+", "", s)
-        s = re.sub(r"\s+", ":", s.strip())
-        s = s.upper()
-        # Handle compact patent numbers like EP3456789A1 -> EP:3456789:A1
-        m = re.match(r"^([A-Z]{2})(\d+)([A-Z0-9]*)$", s)
-        if m and ":" not in s:
-            parts = [m.group(1), m.group(2)]
-            if m.group(3):
-                parts.append(m.group(3))
-            s = ":".join(parts)
+    # Format-specific standardization via custom rule normalizer or registered scheme callback
+    normalizer = getattr(rule, "scheme_normalizer", None)
+    if normalizer is None and expected_prefix:
+        normalizer = get_scheme_normalizer(expected_prefix)
+    if normalizer is None and rule is not None and getattr(rule, "category", None):
+        normalizer = get_scheme_normalizer(str(rule.category))
+
+    if normalizer is not None:
+        s = normalizer(s)
     elif lowercase_value:
         s = s.lower()
 

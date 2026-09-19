@@ -19,7 +19,7 @@
   </noscript>
   <div class="app-container">
     <!-- Top Header Bar -->
-    <header class="top-header">
+    <header class="top-header" role="banner">
       <div class="brand">
         <div class="brand-icon">KG</div>
         <div class="brand-text">
@@ -33,7 +33,7 @@
           <label for="ollamaModelSelect" class="selector-label">
             <span class="pulse-dot" aria-hidden="true"></span> Ollama Model:
           </label>
-          <select id="ollamaModelSelect" class="ollama-select">
+          <select id="ollamaModelSelect" class="ollama-select" aria-label="Select active local Ollama model">
             <option value="">Detecting models...</option>
           </select>
         </div>
@@ -48,28 +48,28 @@
 
     <!-- Interactive Sticky Workflow Breadcrumb -->
     <nav class="workflow-breadcrumb" id="workflowBreadcrumb" aria-label="Workflow progress">
-      <button type="button" class="step step-1 active" data-tab="uploadTab">
-        <span class="step-num">1.</span> Ingestion
+      <button type="button" class="step step-1 active" data-tab="uploadTab" aria-current="step">
+        <span class="step-num">1.</span> Ingest
       </button>
       <span class="step-separator" aria-hidden="true">&rarr;</span>
       <button type="button" class="step step-2" data-tab="fusionTab">
-        <span class="step-num">2.</span> 6-Stage Fusion
+        <span class="step-num">2.</span> Fuse (6-Stage)
       </button>
       <span class="step-separator" aria-hidden="true">&rarr;</span>
       <button type="button" class="step step-3" data-tab="explorerTab">
-        <span class="step-num">3.</span> Graph Explorer
+        <span class="step-num">3.</span> Explore Graph
       </button>
       <span class="step-separator" aria-hidden="true">&rarr;</span>
       <button type="button" class="step step-4" data-tab="alignmentTab">
-        <span class="step-num">4.</span> 8B Alignment
+        <span class="step-num">4.</span> Verify Alignment
       </button>
       <span class="step-separator" aria-hidden="true">&rarr;</span>
       <button type="button" class="step step-5" data-tab="pipelineTab">
-        <span class="step-num">5.</span> 13-Stage Release
+        <span class="step-num">5.</span> Release (13-Stage)
       </button>
       <span class="step-separator" aria-hidden="true">&rarr;</span>
       <button type="button" class="step step-6" data-tab="analyticsTab">
-        <span class="step-num">6.</span> Quality Benchmarks
+        <span class="step-num">6.</span> Benchmark
       </button>
     </nav>
 
@@ -80,9 +80,9 @@
         <p id="contextBannerStats">0 entities merged | 0 edges deduplicated | 0 conflicts flagged</p>
       </div>
       <div class="context-actions">
-        <button type="button" class="quick-link" id="contextViewExplorerBtn">View in Explorer</button>
-        <button type="button" class="quick-link" id="contextReviewAlignmentBtn">Review Alignment</button>
-        <button type="button" class="quick-link" id="contextDownloadReleaseBtn">Download Release</button>
+        <button type="button" class="quick-link" id="contextViewExplorerBtn">Explore in Canvas</button>
+        <button type="button" class="quick-link" id="contextReviewAlignmentBtn">Review Alignment Pairs</button>
+        <button type="button" class="quick-link" id="contextDownloadReleaseBtn">Download Release JSON</button>
       </div>
     </div>
 
@@ -108,7 +108,7 @@
       </button>
     </nav>
 
-    <main id="mainContent">
+    <main id="mainContent" role="main">
       <!-- Tab 1: Upload & Ingestion Studio -->
       <section class="tab-content active" id="uploadTab" role="tabpanel" aria-labelledby="tabBtn-uploadTab" tabindex="0">
         <div class="section-grid">
@@ -368,30 +368,90 @@
           <div class="card search-workbench-card">
             <div class="query-bar-container">
               <input type="text" id="graphQueryInput" class="query-input" placeholder="Query Knowledge Graph or ask Ollama LLM (e.g. 'Which drugs target Type 2 Diabetes?')..." aria-label="Query the knowledge graph or ask the Ollama model">
-              <button type="button" id="runQueryBtn" class="btn btn-primary">Execute Query</button>
-              <button type="button" id="clearQueryAndGraphBtn" class="btn btn-secondary" title="Clear Query &amp; Reset Canvas">Clear / Reset</button>
+              <button type="button" id="runQueryBtn" class="btn btn-primary">Execute Graph Query</button>
+              <button type="button" id="clearQueryAndGraphBtn" class="btn btn-secondary" title="Clear Query &amp; Reset Canvas">Reset Query &amp; Canvas</button>
+            </div>
+
+            <!-- Graph Entity Filter Pills Bar -->
+            <div class="graph-filter-bar" role="toolbar" aria-label="Graph entity filters">
+              <div class="filter-pills-group" id="graphFilterPills" role="radiogroup" aria-label="Filter entities by type">
+                <span class="filter-label">Filter:</span>
+                <button type="button" class="filter-pill active" data-filter="all" role="radio" aria-checked="true">
+                  All <span class="pill-count" id="pillCountAll">0</span>
+                </button>
+                <button type="button" class="filter-pill" data-filter="disease" role="radio" aria-checked="false">
+                  Diseases <span class="pill-count" id="pillCountDisease">0</span>
+                </button>
+                <button type="button" class="filter-pill" data-filter="gene" role="radio" aria-checked="false">
+                  Genes <span class="pill-count" id="pillCountGene">0</span>
+                </button>
+                <button type="button" class="filter-pill" data-filter="drug" role="radio" aria-checked="false">
+                  Drugs / Compounds <span class="pill-count" id="pillCountDrug">0</span>
+                </button>
+                <button type="button" class="filter-pill" data-filter="protein" role="radio" aria-checked="false">
+                  Proteins <span class="pill-count" id="pillCountProtein">0</span>
+                </button>
+              </div>
+              <div class="graph-stats-pill" id="graphCanvasStats">
+                <span class="stat-dot" aria-hidden="true"></span>
+                <span id="graphStatsText">0 nodes &bull; 0 edges</span>
+              </div>
             </div>
 
             <div class="graph-viewport-wrapper">
               <div id="visGraphNetwork" class="graph-network-container"></div>
-              <div class="graph-overlay-controls">
-                <button type="button" id="resetGraphView" class="btn-sm">Fit View</button>
-                <button type="button" id="clearGraphCanvasBtn" class="btn-sm btn-sm-danger">Clear Graph</button>
-                <button type="button" id="reloadActiveKgBtn" class="btn-sm">Reload Active KG</button>
-                <button type="button" id="layoutGraphView" class="btn-sm">Auto-Layout</button>
-                <button type="button" id="fullscreenGraphView" class="btn-sm">Fullscreen Popout</button>
+              <div class="graph-overlay-controls" role="toolbar" aria-label="Graph canvas navigation controls">
+                <button type="button" id="resetGraphView" class="btn-sm" title="Fit Entire Graph into View">Fit View</button>
+                <button type="button" id="zoomInGraphBtn" class="btn-sm" title="Zoom In on Canvas">Zoom +</button>
+                <button type="button" id="zoomOutGraphBtn" class="btn-sm" title="Zoom Out on Canvas">Zoom &minus;</button>
+                <button type="button" id="togglePhysicsBtn" class="btn-sm" title="Toggle Graph Physics Simulation">Pause Physics</button>
+                <button type="button" id="layoutGraphView" class="btn-sm" title="Recompute Force-Directed Layout">Auto-Layout</button>
+                <button type="button" id="reloadActiveKgBtn" class="btn-sm" title="Reload Active Knowledge Graph Data">Reload Active KG</button>
+                <button type="button" id="fullscreenGraphView" class="btn-sm" title="Open Fullscreen Graph Explorer">Fullscreen</button>
+                <button type="button" id="clearGraphCanvasBtn" class="btn-sm btn-sm-danger" title="Clear Canvas and Inspector">Clear Canvas</button>
               </div>
             </div>
           </div>
 
           <div class="card inspector-card">
-            <h2>Entity &amp; Lineage Inspector</h2>
-            <div id="inspectorContent" class="inspector-details">
-              <p class="placeholder-text">Click on any node in the graph viewer to inspect canonical identity, provenance, and confidence score.</p>
+            <div class="inspector-card-header">
+              <h2>Entity &amp; Lineage Inspector</h2>
+            </div>
+            <div id="inspectorContent" class="inspector-details" aria-live="polite">
+              <div class="empty-state" id="inspectorEmptyState">
+                <div class="empty-icon" aria-hidden="true">
+                  <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="18" cy="5" r="3"></circle>
+                    <circle cx="6" cy="12" r="3"></circle>
+                    <circle cx="18" cy="19" r="3"></circle>
+                    <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line>
+                    <line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line>
+                  </svg>
+                </div>
+                <h3 class="empty-title">No Entity Selected</h3>
+                <p class="empty-desc">
+                  <strong>What this is:</strong> Real-time identity inspector displaying canonical IDs, calibrated confidence, and W3C PROV-O audit trails.
+                </p>
+                <div class="empty-hint">
+                  <strong>How to start:</strong> Click on any node in the graph viewer above or run a search query to inspect its full ontological lineage.
+                </div>
+              </div>
             </div>
             <div class="llm-response-box" id="llmResponseBox" aria-live="polite">
-              <h3>Selected Ollama Model Insight</h3>
-              <div class="response-text" id="llmResponseText">No query executed yet. Run a query above to see model reasoning.</div>
+              <h3>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="color: var(--primary-orange);"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path><polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline><line x1="12" y1="22.08" x2="12" y2="12"></line></svg>
+                Selected Ollama Model Insight
+              </h3>
+              <div class="response-text" id="llmResponseText">
+                <div class="empty-state" style="padding: var(--space-3) var(--space-2); background: transparent; border: none;">
+                  <p class="empty-desc" style="margin-bottom: var(--space-2);">
+                    <strong>What this is:</strong> Local LLM reasoning synthesized directly from active graph topology and evidence.
+                  </p>
+                  <div class="empty-hint" style="max-width: 100%;">
+                    <strong>How to start:</strong> Enter an ontological question above (e.g. <em>"Which drugs target Type 2 Diabetes?"</em>) and click "Execute Graph Query".
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -408,7 +468,7 @@
             <div class="form-group">
               <div class="policy-header-row">
                 <label for="sourceEntityInput" class="form-label" style="margin-bottom: 0;">Candidate Pair</label>
-                <button type="button" id="loadNextCandidateBtn" class="btn-sm btn-load-pair">Load Pair from Active Graph</button>
+                <button type="button" id="loadNextCandidateBtn" class="btn-sm btn-load-pair">Load Candidate Pair</button>
               </div>
               <div class="pair-inputs">
                 <input type="text" id="sourceEntityInput" class="input-field" list="activeEntityList" placeholder="Source Entity (e.g. INS Gene)">
@@ -580,26 +640,26 @@
                 <h4>Confidence Factor Breakdown</h4>
                 <div class="factor">
                   <span class="factor-name">Name Similarity</span>
-                  <div class="factor-bar"><div class="factor-fill" id="nameFactorFill" style="width: 88%;"></div></div>
-                  <span class="factor-value" id="nameFactorVal">0.88</span>
+                  <div class="factor-bar"><div class="factor-fill" id="nameFactorFill" style="width: 0%;"></div></div>
+                  <span class="factor-value" id="nameFactorVal">--</span>
                 </div>
                 <div class="factor">
                   <span class="factor-name">Type Compatibility</span>
-                  <div class="factor-bar"><div class="factor-fill" id="typeFactorFill" style="width: 80%;"></div></div>
-                  <span class="factor-value" id="typeFactorVal">0.80</span>
+                  <div class="factor-bar"><div class="factor-fill" id="typeFactorFill" style="width: 0%;"></div></div>
+                  <span class="factor-value" id="typeFactorVal">--</span>
                 </div>
                 <div class="factor">
                   <span class="factor-name">Relation Overlap</span>
-                  <div class="factor-bar"><div class="factor-fill" id="relFactorFill" style="width: 85%;"></div></div>
-                  <span class="factor-value" id="relFactorVal">0.85</span>
+                  <div class="factor-bar"><div class="factor-fill" id="relFactorFill" style="width: 0%;"></div></div>
+                  <span class="factor-value" id="relFactorVal">--</span>
                 </div>
               </div>
 
               <!-- Decision Checkpoint Action Buttons -->
               <div class="decision-buttons">
                 <button type="button" class="btn btn-primary" id="acceptVerificationBtn">Accept as SAME Entity</button>
-                <button type="button" class="btn btn-secondary" id="rejectVerificationBtn">Mark as DIFFERENT</button>
-                <button type="button" class="btn btn-secondary" id="requeueReviewBtn">Flag for Later Review</button>
+                <button type="button" class="btn btn-secondary" id="rejectVerificationBtn">Mark as DIFFERENT Entity</button>
+                <button type="button" class="btn btn-secondary" id="requeueReviewBtn">Flag for Domain Review</button>
               </div>
 
               <!-- Decision Recorded Toast Confirmation -->
@@ -641,9 +701,27 @@
           <div class="pipeline-controls-panel">
             <h3>Pipeline Execution &amp; Target Disease Configuration</h3>
             <div class="form-row">
-              <div class="form-group">
-                <label for="targetDiseaseSelect">Target Disease for Repurposing Traversal</label>
-                <select id="targetDiseaseSelect" class="input-field">
+              <div class="form-group disease-selector-group">
+                <div class="field-header-row" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.35rem;">
+                  <label for="targetDiseaseInput">Target Disease for Repurposing Traversal</label>
+                  <span id="detectedDiseasesCountBadge" class="outcome-badge same" style="font-size: 0.68rem; padding: 0.15rem 0.45rem;">2 PRESETS</span>
+                </div>
+                <div class="disease-input-wrapper" style="display: flex; gap: 0.4rem;">
+                  <input type="text" id="targetDiseaseInput" class="input-field" list="targetDiseaseDatalist" placeholder="e.g. MONDO:0005148, DOID:162, or select..." value="MONDO:0005148" autocomplete="off" style="flex: 1;" />
+                  <datalist id="targetDiseaseDatalist">
+                    <option value="MONDO:0005148">Type 2 Diabetes Mellitus (MONDO:0005148)</option>
+                    <option value="MONDO:0005267">EGFR Malignancy / Lung Neoplasm (MONDO:0005267)</option>
+                    <option value="MONDO:0004975">Alzheimer Disease (MONDO:0004975)</option>
+                    <option value="MONDO:0007254">Breast Cancer (MONDO:0007254)</option>
+                    <option value="MONDO:0005180">Parkinson Disease (MONDO:0005180)</option>
+                    <option value="MONDO:0005010">Cardiomyopathy (MONDO:0005010)</option>
+                    <option value="DOID:162">Cancer (DOID:162)</option>
+                  </datalist>
+                  <button type="button" id="rescanDiseasesBtn" class="btn-sm" style="background: rgba(255,107,0,0.15); border: 1px solid var(--primary-orange); color: var(--primary-orange); white-space: nowrap; cursor: pointer; border-radius: 6px; padding: 0.3rem 0.6rem; font-size: 0.78rem;" title="Rescan active graph and assertions for diseases">Scan Graph</button>
+                </div>
+                <small class="field-hint" style="font-size: 0.72rem; color: var(--text-muted); margin-top: 0.3rem; display: block;">Auto-detected from active graph triples. You can also type any custom disease ID (e.g. MONDO, DOID, EFO).</small>
+                <!-- Hidden fallback for backward compatibility -->
+                <select id="targetDiseaseSelect" style="display: none;">
                   <option value="MONDO:0005148">Type 2 Diabetes Mellitus (MONDO:0005148)</option>
                   <option value="MONDO:0005267">EGFR Malignancy / Lung Neoplasm (MONDO:0005267)</option>
                 </select>
@@ -680,7 +758,9 @@
 
           <div class="execution-manifest-box" id="manifestOutput">
             <h3>Latest Execution Manifest</h3>
-            <pre class="manifest-json" id="manifestJson">// Run a pipeline to inspect execution manifest and stage statuses</pre>
+            <pre class="manifest-json" id="manifestJson">// What this is: 13-Stage E2E Release &amp; Lifecycle Manifest.
+// Why it's empty: No pipeline execution recorded yet in this session.
+// How to start: Click "Run 13-Stage E2E Release" or "Run Drug Repurposing Pilot" above to execute stages and inspect verification hashes.</pre>
           </div>
         </div>
       </section>
@@ -696,42 +776,42 @@
           <div class="metrics-grid">
             <div class="metric-card">
               <div class="metric-title">Recall @ 10</div>
-              <div class="metric-value" id="recall10Val">92.0%</div>
+              <div class="metric-value" id="recall10Val">--</div>
               <div class="metric-sub">Candidate Retrieval</div>
             </div>
             <div class="metric-card">
               <div class="metric-title">Recall @ 20</div>
-              <div class="metric-value" id="recall20Val">96.0%</div>
+              <div class="metric-value" id="recall20Val">--</div>
               <div class="metric-sub">Candidate Retrieval</div>
             </div>
             <div class="metric-card">
               <div class="metric-title">Recall @ 50</div>
-              <div class="metric-value" id="recall50Val">99.0%</div>
+              <div class="metric-value" id="recall50Val">--</div>
               <div class="metric-sub">Candidate Retrieval</div>
             </div>
             <div class="metric-card">
               <div class="metric-title">Resolution F1 Score</div>
-              <div class="metric-value" id="f1Val">96.0%</div>
-              <div class="metric-sub">Precision: 98% &bull; Recall: 94%</div>
+              <div class="metric-value" id="f1Val">--</div>
+              <div class="metric-sub" id="f1Subtext">Awaiting benchmark execution. Click "Run Live Benchmarks" to measure metrics.</div>
             </div>
           </div>
 
           <div class="metrics-grid secondary-metrics">
             <div class="metric-card">
               <div class="metric-title">Operational Latency (P50)</div>
-              <div class="metric-value" id="p50Val">5.2 ms</div>
+              <div class="metric-value" id="p50Val">--</div>
             </div>
             <div class="metric-card">
               <div class="metric-title">Operational Latency (P95)</div>
-              <div class="metric-value" id="p95Val">7.8 ms</div>
+              <div class="metric-value" id="p95Val">--</div>
             </div>
             <div class="metric-card">
               <div class="metric-title">Operational Latency (P99)</div>
-              <div class="metric-value" id="p99Val">10.4 ms</div>
+              <div class="metric-value" id="p99Val">--</div>
             </div>
             <div class="metric-card">
               <div class="metric-title">Calibration ECE</div>
-              <div class="metric-value" id="eceVal">0.02</div>
+              <div class="metric-value" id="eceVal">--</div>
             </div>
           </div>
         </div>
@@ -740,7 +820,7 @@
   </div>
 
   <!-- Modal Dialog for Conflict Resolution Policies -->
-  <dialog id="policyHelper" class="modal" aria-labelledby="policyHelperTitle">
+  <dialog id="policyHelper" class="modal" role="dialog" aria-modal="true" aria-labelledby="policyHelperTitle">
     <div class="modal-content">
       <h2 id="policyHelperTitle">Conflict Resolution Strategies Explained</h2>
       <p>When Graph A and Graph B provide contradictory facts for the same canonical entity or predicate, the Hybrid Fusion Engine applies your selected policy.</p>
@@ -817,6 +897,26 @@
 
       <div class="modal-footer-actions">
         <button id="closePolicyHelperBtn" class="btn btn-primary" type="button">Understood &amp; Close</button>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- Modal Dialog for Application Alerts / Errors (WCAG 2.1 AA Compliant) -->
+  <dialog id="appErrorModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="appErrorModalTitle">
+    <div class="modal-content modal-error-content">
+      <div class="modal-header-with-icon">
+        <span class="modal-alert-icon" aria-hidden="true">⚠️</span>
+        <h2 id="appErrorModalTitle">Action Required</h2>
+      </div>
+      <div class="modal-body" id="appErrorModalBody">
+        <p id="appErrorModalMessage">An unexpected condition occurred.</p>
+        <div id="appErrorModalRemedy" class="modal-remedy-box" style="display: none;">
+          <div class="remedy-badge">Suggested Action</div>
+          <p id="appErrorModalRemedyText"></p>
+        </div>
+      </div>
+      <div class="modal-footer-actions">
+        <button id="closeAppErrorModalBtn" class="btn btn-primary" type="button">Dismiss Notice</button>
       </div>
     </div>
   </dialog>

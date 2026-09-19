@@ -1,14 +1,14 @@
 """RDFAuthority: the single interface Core uses for the semantic layer.
 
-RDF is authoritative. ``RDFAuthority`` talks to an ``RDFBackend`` and
-exposes snapshot writing and reading. Core never depends on a concrete
-RDF backend; backends live under ``infrastructure/rdf``.
+RDF is authoritative. ``RDFAuthority`` talks to an ``RDFBackend`` protocol
+(defined in ``contracts.rdf``) and exposes snapshot writing and reading. Core never
+depends on a concrete RDF backend; backends live under ``infrastructure/rdf``.
 """
 
 from __future__ import annotations
 
+from contracts.rdf import RDFBackend
 from core.rdf.graph import NamedGraph, RDFDataset
-from sdk.rdf_backend import RDFBackend
 
 
 class RDFAuthority:

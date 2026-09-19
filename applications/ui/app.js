@@ -61,6 +61,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initAlignmentVerifier();
   initPipelineManager();
   initAnalyticsDashboard();
+  initAppErrorModal();
   initPolicyHelperModal();
   initTooltipSystem();
   initKeyboardNavigation();
@@ -304,6 +305,41 @@ async function loadActiveGraphData() {
         window.activeGraphNodes = data.nodes || [];
         appState.ui.currentPairIndex = 0;
 
+        // Update Graph Explorer Canvas Stats Badge and Filter Pill Counts
+        const statsEl = document.getElementById('graphStatsText');
+        if (statsEl) {
+          statsEl.textContent = `${nodeCount} nodes • ${(data.edges || []).length} edges`;
+        }
+
+        const countAll = document.getElementById('pillCountAll');
+        if (countAll) countAll.textContent = nodeCount;
+
+        const countDisease = document.getElementById('pillCountDisease');
+        const countGene = document.getElementById('pillCountGene');
+        const countDrug = document.getElementById('pillCountDrug');
+        const countProtein = document.getElementById('pillCountProtein');
+
+        let diseaseCount = 0, geneCount = 0, drugCount = 0, proteinCount = 0;
+        (data.nodes || []).forEach(n => {
+          const grp = (n.group || '').toLowerCase();
+          const id = String(n.id || '').toUpperCase();
+          const lbl = String(n.label || '').toLowerCase();
+          if (grp === 'disease' || id.startsWith('MONDO:') || id.startsWith('DOID:') || lbl.includes('diabetes') || lbl.includes('cancer')) {
+            diseaseCount++;
+          } else if (grp === 'gene' || id.startsWith('HGNC:') || grp === 'genes') {
+            geneCount++;
+          } else if (grp === 'drug' || grp === 'chemical' || grp === 'compound' || id.startsWith('CHEBI:')) {
+            drugCount++;
+          } else if (grp === 'protein' || id.startsWith('UNIPROT:') || id.startsWith('P0') || id.startsWith('P1')) {
+            proteinCount++;
+          }
+        });
+
+        if (countDisease) countDisease.textContent = diseaseCount;
+        if (countGene) countGene.textContent = geneCount;
+        if (countDrug) countDrug.textContent = drugCount;
+        if (countProtein) countProtein.textContent = proteinCount;
+
         // Update Entity Alignment Candidate datalist and inputs with active graph entities
         const datalist = document.getElementById('activeEntityList');
         if (datalist && data.nodes) {
@@ -326,6 +362,9 @@ async function loadActiveGraphData() {
           }
           syncAlignmentCandidateComparison();
         }
+
+        // Dynamically update Target Disease options from active graph
+        populateDetectedDiseases();
       }
     }
   } catch (err) {
@@ -553,6 +592,17 @@ function initUploadHandler() {
 
   uploadBtn.addEventListener('click', async () => {
     if (appState.operations.uploadInProgress) return;
+
+    if (!selectedFile) {
+      appendLog(terminal, '[Upload Error] No file selected. Please choose or drop a valid RDF/CSV dataset before uploading.', 'error');
+      showErrorModal(
+        'No Dataset Selected',
+        'No RDF or CSV file was selected for upload. The ingestion pipeline requires a valid graph file.',
+        'Choose a Turtle (.ttl), JSON-LD (.jsonld), or tabular triples CSV (.csv) file using the file browser or drag-and-drop zone.'
+      );
+      return;
+    }
+
     appState.updateOperation('uploadInProgress', true);
     uploadBtn.disabled = true;
     const originalBtnText = uploadBtn.textContent;
@@ -560,13 +610,8 @@ function initUploadHandler() {
 
     const pluginPack = document.getElementById('pluginPackSelect').value;
     const format = formatSelect.value;
-
-let content = "@prefix ex: <http://example.org/> .\nex:node1 ex:related_to ex:node2 .\nex:node2 ex:related_to ex:node3 .\n";
-let fileName = selectedFile ? selectedFile.name : "demo_dataset.ttl";
-
-    if (selectedFile) {
-      content = await selectedFile.text();
-    }
+    const content = await selectedFile.text();
+    const fileName = selectedFile.name;
 
     appendLog(terminal, `[Upload] Reading ${fileName} (${format.toUpperCase()})...`, 'info');
     appendLog(terminal, `[Ingest] Validating compatibility against ${pluginPack} Domain Pack...`, 'info');
@@ -750,10 +795,10 @@ function initGraphFusionHandler() {
     progressTrackerEl.style.display = 'flex';
     let html = '';
     steps.forEach(st => {
-      const icon = st.status === 'complete' ? '[OK]' : (st.status === 'running' ? '...' : '[-]');
+      const icon = st.status === 'complete' ? '✓' : (st.status === 'running' ? '↻' : '○');
       html += `
         <div class="progress-step ${st.status}">
-          <span class="icon">${icon}</span>
+          <span class="icon" aria-hidden="true">${icon}</span>
           <span class="label">${st.label}</span>
           <span class="detail">${st.detail || ''}</span>
         </div>
@@ -1071,15 +1116,29 @@ async function initGraphExplorer() {
 
   window.networkInstance = new vis.Network(container, data, options);
 
-  // Rich Inspector on Node Selection
-  window.networkInstance.on('selectNode', (params) => {
-    const nodeId = params.nodes[0];
-    const node = window.networkNodes.get(nodeId);
-    if (!node) return;
-
-    appState.ui.selectedNode = node;
-    renderRichNodeInspector(node);
-  });
+  function renderEmptyInspector() {
+    if (!inspectorContent) return;
+    inspectorContent.innerHTML = `
+      <div class="empty-state" id="inspectorEmptyState">
+        <div class="empty-icon" aria-hidden="true">
+          <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="18" cy="5" r="3"></circle>
+            <circle cx="6" cy="12" r="3"></circle>
+            <circle cx="18" cy="19" r="3"></circle>
+            <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line>
+            <line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line>
+          </svg>
+        </div>
+        <h3 class="empty-title">No Entity Selected</h3>
+        <p class="empty-desc">
+          <strong>What this is:</strong> Real-time identity inspector displaying canonical IDs, calibrated confidence, and W3C PROV-O audit trails.
+        </p>
+        <div class="empty-hint">
+          <strong>How to start:</strong> Click on any node in the graph viewer above or run a search query to inspect its full ontological lineage.
+        </div>
+      </div>
+    `;
+  }
 
   function renderRichNodeInspector(node) {
     if (!inspectorContent) return;
@@ -1092,11 +1151,15 @@ async function initGraphExplorer() {
     const provenanceSources = Array.isArray(node.provenance_sources) ? node.provenance_sources : [];
     const statusVal = String(node.status || 'CANONICAL');
     const canonId = String(node.canonical_id || node.id || 'UNKNOWN');
+    const groupVal = String(node.group || 'Entity');
 
     inspectorContent.innerHTML = `
       <div class="entity-header">
-        <h3>${escapeHtml(cleanLabel)}</h3>
-        <span class="tooltip-trigger" data-tooltip="Canonical Entity: Unified representation resolving synonyms and cross-source identifiers.">i</span>
+        <div>
+          <span class="version-tag" style="display: inline-block; margin-bottom: 2px;">${escapeHtml(groupVal.toUpperCase())}</span>
+          <h3 style="margin: 0;">${escapeHtml(cleanLabel)}</h3>
+        </div>
+        <button type="button" class="btn btn-ghost" id="deselectNodeBtn" style="min-height: 32px; padding: 0.2rem 0.6rem; font-size: 0.75rem;" title="Close Details & Return to Overview">&times; Close</button>
       </div>
 
       <div class="inspector-row">
@@ -1154,27 +1217,203 @@ async function initGraphExplorer() {
           `}
         </div>
       </div>
+
+      <div class="node-quick-actions">
+        <button type="button" class="btn btn-secondary" id="focusSelectedNodeBtn">Focus in Canvas</button>
+        <button type="button" class="btn btn-secondary" id="querySelectedNodeBtn">Ask Ollama</button>
+        <button type="button" class="btn btn-secondary" id="copyCanonicalIdBtn">Copy URI</button>
+      </div>
     `;
+
+    // Interactive Action Handlers
+    const deselectBtn = document.getElementById('deselectNodeBtn');
+    if (deselectBtn) {
+      deselectBtn.addEventListener('click', () => {
+        if (window.networkInstance) window.networkInstance.unselectAll();
+        appState.ui.selectedNode = null;
+        renderEmptyInspector();
+      });
+    }
+
+    const focusBtn = document.getElementById('focusSelectedNodeBtn');
+    if (focusBtn) {
+      focusBtn.addEventListener('click', () => {
+        if (window.networkInstance) {
+          window.networkInstance.focus(node.id, {
+            scale: 1.4,
+            animation: { duration: 350, easingFunction: 'easeInOutQuad' }
+          });
+        }
+      });
+    }
+
+    const queryNodeBtn = document.getElementById('querySelectedNodeBtn');
+    if (queryNodeBtn) {
+      queryNodeBtn.addEventListener('click', () => {
+        if (queryInput && runQueryBtn) {
+          queryInput.value = `What biological relationships and functions are associated with ${cleanLabel}?`;
+          runQueryBtn.click();
+        }
+      });
+    }
+
+    const copyBtn = document.getElementById('copyCanonicalIdBtn');
+    if (copyBtn) {
+      copyBtn.addEventListener('click', async () => {
+        try {
+          await navigator.clipboard.writeText(canonId);
+          showToast(`Copied canonical URI: ${canonId}`, 'success');
+        } catch (e) {
+          showToast(`URI: ${canonId}`, 'info');
+        }
+      });
+    }
   }
 
+  // Rich Inspector on Node Selection
+  window.networkInstance.on('selectNode', (params) => {
+    const nodeId = params.nodes[0];
+    const node = window.networkNodes.get(nodeId);
+    if (!node) return;
+    appState.ui.selectedNode = node;
+    renderRichNodeInspector(node);
+  });
+
+  window.networkInstance.on('deselectNode', () => {
+    appState.ui.selectedNode = null;
+    renderEmptyInspector();
+  });
+
+  // Zoom and Physics Canvas Controls
   resetBtn.addEventListener('click', () => {
     window.networkInstance.fit();
   });
+
+  const zoomInBtn = document.getElementById('zoomInGraphBtn');
+  if (zoomInBtn) {
+    zoomInBtn.addEventListener('click', () => {
+      if (window.networkInstance) {
+        const currentScale = window.networkInstance.getScale();
+        window.networkInstance.moveTo({
+          scale: currentScale * 1.3,
+          animation: { duration: 250, easingFunction: 'easeInOutQuad' }
+        });
+      }
+    });
+  }
+
+  const zoomOutBtn = document.getElementById('zoomOutGraphBtn');
+  if (zoomOutBtn) {
+    zoomOutBtn.addEventListener('click', () => {
+      if (window.networkInstance) {
+        const currentScale = window.networkInstance.getScale();
+        window.networkInstance.moveTo({
+          scale: currentScale * 0.75,
+          animation: { duration: 250, easingFunction: 'easeInOutQuad' }
+        });
+      }
+    });
+  }
+
+  const togglePhysicsBtn = document.getElementById('togglePhysicsBtn');
+  let physicsRunning = true;
+  if (togglePhysicsBtn) {
+    togglePhysicsBtn.addEventListener('click', () => {
+      if (window.networkInstance) {
+        physicsRunning = !physicsRunning;
+        window.networkInstance.setOptions({ physics: { enabled: physicsRunning } });
+        togglePhysicsBtn.textContent = physicsRunning ? 'Pause Physics' : 'Resume Physics';
+        togglePhysicsBtn.style.color = physicsRunning ? 'var(--text-secondary)' : 'var(--primary-orange)';
+        announceA11y(physicsRunning ? 'Physics simulation resumed' : 'Physics simulation paused');
+      }
+    });
+  }
+
+  // Filter Pills Handling
+  const filterPills = document.querySelectorAll('#graphFilterPills .filter-pill');
+  filterPills.forEach(pill => {
+    pill.addEventListener('click', () => {
+      filterPills.forEach(p => {
+        p.classList.remove('active');
+        p.setAttribute('aria-checked', 'false');
+      });
+      pill.classList.add('active');
+      pill.setAttribute('aria-checked', 'true');
+
+      const filterType = pill.getAttribute('data-filter') || 'all';
+      applyGraphFilter(filterType);
+    });
+  });
+
+  function applyGraphFilter(filterType) {
+    if (!window.networkNodes || !window.networkInstance) return;
+    const allNodes = window.networkNodes.get();
+    if (allNodes.length === 0) return;
+
+    if (filterType === 'all') {
+      window.networkNodes.update(allNodes.map(n => ({ id: n.id, hidden: false, opacity: 1 })));
+      announceA11y(`Showing all ${allNodes.length} graph entities`);
+      return;
+    }
+
+    const matches = allNodes.filter(n => {
+      const grp = (n.group || '').toLowerCase();
+      const id = String(n.id || '').toUpperCase();
+      const lbl = String(n.label || '').toLowerCase();
+
+      if (filterType === 'disease') {
+        return grp === 'disease' || id.startsWith('MONDO:') || id.startsWith('DOID:') || lbl.includes('diabetes') || lbl.includes('cancer');
+      }
+      if (filterType === 'gene') {
+        return grp === 'gene' || id.startsWith('HGNC:') || grp === 'genes';
+      }
+      if (filterType === 'drug') {
+        return grp === 'drug' || grp === 'chemical' || grp === 'compound' || id.startsWith('CHEBI:');
+      }
+      if (filterType === 'protein') {
+        return grp === 'protein' || id.startsWith('UNIPROT:') || id.startsWith('P0') || id.startsWith('P1');
+      }
+      return false;
+    });
+
+    const matchIds = new Set(matches.map(m => m.id));
+    window.networkNodes.update(allNodes.map(n => ({
+      id: n.id,
+      opacity: matchIds.has(n.id) ? 1 : 0.15,
+      hidden: false
+    })));
+
+    if (matches.length > 0) {
+      window.networkInstance.fit({ nodes: Array.from(matchIds), animation: true });
+      announceA11y(`Filtered to ${matches.length} ${filterType} entities`);
+    } else {
+      showToast(`No entities matching type "${filterType}" in active graph.`, 'info');
+    }
+  }
 
   // Clear / Reset Canvas & Query
   function clearGraphAndInspector() {
     if (queryInput) queryInput.value = '';
     if (window.networkNodes) window.networkNodes.clear();
     if (window.networkEdges) window.networkEdges.clear();
-    if (inspectorContent) {
-      inspectorContent.innerHTML = '<p class="placeholder-text">Graph canvas cleared. Click "Reload Active KG" or enter a search query above to load entities.</p>';
-    }
+    renderEmptyInspector();
     if (llmResponseText) {
-      llmResponseText.textContent = 'No query executed yet. Run a query above to see model reasoning.';
+      llmResponseText.innerHTML = `
+        <div class="empty-state" style="padding: var(--space-3) var(--space-2); background: transparent; border: none;">
+          <p class="empty-desc" style="margin-bottom: var(--space-2);">
+            <strong>What this is:</strong> Local LLM reasoning synthesized directly from active graph topology and evidence.
+          </p>
+          <div class="empty-hint" style="max-width: 100%;">
+            <strong>How to start:</strong> Enter an ontological question above (e.g. <em>"Which drugs target Type 2 Diabetes?"</em>) and click "Execute Graph Query".
+          </div>
+        </div>
+      `;
     }
     if (llmResponseBox) {
       llmResponseBox.classList.remove('active-glow', 'loading');
     }
+    const statsEl = document.getElementById('graphStatsText');
+    if (statsEl) statsEl.textContent = '0 nodes • 0 edges';
   }
 
   const clearQueryBtn = document.getElementById('clearQueryAndGraphBtn');
@@ -1189,9 +1428,8 @@ async function initGraphExplorer() {
     reloadActiveBtn.addEventListener('click', async () => {
       appState.graphs.lastFusion = null;
       await loadActiveGraphData();
-      if (inspectorContent) {
-        inspectorContent.innerHTML = '<p class="placeholder-text">Active Knowledge Graph reloaded. Click on any node in the graph viewer to inspect canonical identity, provenance, and confidence score.</p>';
-      }
+      renderEmptyInspector();
+      showToast('Active Knowledge Graph reloaded successfully.', 'success');
     });
   }
 
@@ -1220,8 +1458,8 @@ async function initGraphExplorer() {
         <title>Full Screen Knowledge Graph Workbench</title>
         <script type="text/javascript" src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
         <style>
-          body { margin: 0; padding: 0; background: #09090b; color: #f4f4f5; font-family: sans-serif; overflow: hidden; }
-          #popoutHeader { position: absolute; top: 12px; left: 16px; z-index: 10; background: rgba(20,20,23,0.85); padding: 8px 16px; border-radius: 8px; border: 1px solid #27272a; }
+          body { margin: 0; padding: 0; background: #09090b; color: #f8fafc; font-family: 'Plus Jakarta Sans', sans-serif; overflow: hidden; }
+          #popoutHeader { position: absolute; top: 12px; left: 16px; z-index: 10; background: rgba(17,17,21,0.85); backdrop-filter: blur(8px); padding: 8px 16px; border-radius: 8px; border: 1px solid #27272f; }
           #popoutHeader h2 { margin: 0; font-size: 1rem; color: #ff6b00; }
           #fullscreenCanvas { width: 100vw; height: 100vh; }
         </style>
@@ -1229,7 +1467,7 @@ async function initGraphExplorer() {
       <body>
         <div id="popoutHeader">
           <h2>Hybrid Knowledge Graph -- Fullscreen Explorer</h2>
-          <span style="font-size: 0.8rem; color: #a1a1aa;">Nodes: ${window.networkNodes.length} | Edges: ${window.networkEdges.length}</span>
+          <span style="font-size: 0.8rem; color: #cbd5e1;">Nodes: ${window.networkNodes.length} | Edges: ${window.networkEdges.length}</span>
         </div>
         <div id="fullscreenCanvas"></div>
         <script>
@@ -1239,7 +1477,7 @@ async function initGraphExplorer() {
           const isLarge = nodes.length > 250;
           const options = {
             nodes: { shape: 'dot', size: isLarge ? 16 : 24, font: { color: '#fff', size: isLarge ? 10 : 14 }, borderWidth: 2 },
-            edges: { font: { size: 11, align: 'middle', color: '#a1a1aa' }, arrows: { to: { enabled: true } }, color: { opacity: isLarge ? 0.4 : 0.8 } },
+            edges: { font: { size: 11, align: 'middle', color: '#cbd5e1' }, arrows: { to: { enabled: true } }, color: { opacity: isLarge ? 0.4 : 0.8 } },
             physics: {
               solver: isLarge ? 'barnesHut' : 'forceAtlas2Based',
               barnesHut: { gravitationalConstant: -2000, centralGravity: 0.3, springLength: 95 },
@@ -1273,7 +1511,7 @@ async function initGraphExplorer() {
     llmResponseText.innerHTML = `
       <div class="query-loading">
         <div class="spinner"></div>
-        <p>Querying <strong>${model || 'Local Model'}</strong>...</p>
+        <p>Querying <strong>${escapeHtml(model || 'Local Model')}</strong>...</p>
         <p class="sub">Analyzing graph topology & synthesizing contextual reasoning</p>
       </div>
     `;
@@ -1281,7 +1519,7 @@ async function initGraphExplorer() {
 
     const qLower = q.toLowerCase();
     const allNodes = window.networkNodes.get();
-    const matchingNodes = allNodes.filter(n => n.label.toLowerCase().includes(qLower));
+    const matchingNodes = allNodes.filter(n => n && (n.label || n.id || '').toLowerCase().includes(qLower));
 
     if (matchingNodes.length > 0) {
       const nodeIds = matchingNodes.map(n => n.id);
@@ -1300,8 +1538,7 @@ async function initGraphExplorer() {
       llmResponseBox.classList.remove('loading');
 
       if (resData.status === 'success') {
-        const citedCount = matchingNodes.length > 0 ? matchingNodes.length : (allNodes.length > 0 ? Math.min(allNodes.length, 2) : 0);
-        // Use confidence from backend response if available, otherwise show N/A
+        const citedCount = matchingNodes.length;
         const confidence = resData.confidence !== undefined ? resData.confidence : null;
 
         llmResponseText.innerHTML = `
@@ -1321,20 +1558,38 @@ async function initGraphExplorer() {
 
         announceA11y(`Query response received from model ${model || 'verifier'}.`);
 
-        const focusBtn = document.getElementById('focusMatchedNodesBtn');
-        if (focusBtn && matchingNodes.length > 0) {
-          focusBtn.addEventListener('click', () => {
+        const focusMatchedBtn = document.getElementById('focusMatchedNodesBtn');
+        if (focusMatchedBtn && matchingNodes.length > 0) {
+          focusMatchedBtn.addEventListener('click', () => {
             window.networkInstance.selectNodes(matchingNodes.map(n => n.id));
             window.networkInstance.fit({ nodes: matchingNodes.map(n => n.id), animation: true });
           });
         }
       } else {
-        llmResponseText.innerHTML = `<div style="color: var(--status-red); font-weight: 600;">Error: ${escapeHtml(resData.message || 'LLM query failed')}</div>`;
+        llmResponseText.innerHTML = `
+          <div class="error-callout">
+            <div class="error-heading">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
+              Query Execution Error
+            </div>
+            <div class="error-body"><strong>What happened:</strong> ${escapeHtml(resData.message || 'Model execution failed.')}</div>
+            <div class="error-remedy"><strong>How to fix:</strong> Check that the local model is pulled and running in Ollama.</div>
+          </div>
+        `;
         announceA11y(`Query error: ${resData.message}`);
       }
     } catch (err) {
       llmResponseBox.classList.remove('loading');
-      llmResponseText.innerHTML = `<div style="color: var(--status-red); font-weight: 600;">Error querying Ollama model: ${escapeHtml(err.message)}</div>`;
+      llmResponseText.innerHTML = `
+        <div class="error-callout">
+          <div class="error-heading">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
+            Ollama Connection Error
+          </div>
+          <div class="error-body"><strong>What happened:</strong> Could not connect to Ollama local inference daemon (${escapeHtml(err.message)}).</div>
+          <div class="error-remedy"><strong>How to fix:</strong> Ensure Ollama is running on port 11434 with <code>ollama run llama3.1:8b</code> and retry.</div>
+        </div>
+      `;
       announceA11y(`Query error: ${err.message}`);
     } finally {
       appState.updateOperation('queryInProgress', false);
@@ -1508,10 +1763,19 @@ function syncAlignmentCandidateComparison() {
   const tLower = tgt.toLowerCase();
   const nameOverlap = sLower.includes(tLower) || tLower.includes(sLower) || sLower.slice(0, 3) === tLower.slice(0, 3);
 
+  const allEdges = (window.appState && window.appState.graphData && window.appState.graphData.edges) || [];
+  const srcNeighbors = new Set(allEdges.filter(e => e.from === src || e.to === src).map(e => e.from === src ? e.to : e.from));
+  const tgtNeighbors = new Set(allEdges.filter(e => e.from === tgt || e.to === tgt).map(e => e.from === tgt ? e.to : e.from));
+  const sharedNeighbors = [...srcNeighbors].filter(n => tgtNeighbors.has(n));
+
   if (matchEl) {
-    matchEl.textContent = nameOverlap 
-      ? `Strong lexical alignment between "${src}" and "${tgt}" (${Math.min(src.length, tgt.length)} character overlap)`
-      : `Both entities share connected structural neighbors in the active canonical release graph`;
+    if (nameOverlap) {
+      matchEl.textContent = `Strong lexical alignment between "${src}" and "${tgt}" (${Math.min(src.length, tgt.length)} character overlap)`;
+    } else if (sharedNeighbors.length > 0) {
+      matchEl.textContent = `Entities share ${sharedNeighbors.length} connected structural neighbor(s) in the active release graph.`;
+    } else {
+      matchEl.textContent = `No direct string or shared structural neighbor overlap detected between "${src}" and "${tgt}".`;
+    }
   }
   if (mismatchEl) {
     mismatchEl.textContent = srcTypeVal !== tgtTypeVal
@@ -1630,13 +1894,36 @@ function initAlignmentVerifier() {
           `;
         }
 
-        // Update confidence factors
+        // Update confidence factors dynamically
         const numScore = parseFloat(score);
         const nameVal = document.getElementById('nameFactorVal');
         const nameFill = document.getElementById('nameFactorFill');
         if (nameVal && nameFill) {
           nameVal.textContent = numScore.toFixed(2);
-          nameFill.style.width = `${numScore * 100}%`;
+          nameFill.style.width = `${Math.min(100, Math.max(0, numScore * 100))}%`;
+        }
+
+        const typeVal = document.getElementById('typeFactorVal');
+        const typeFill = document.getElementById('typeFactorFill');
+        const relVal = document.getElementById('relFactorVal');
+        const relFill = document.getElementById('relFactorFill');
+
+        const breakdown = v.score_breakdown || {};
+        const typeComp = breakdown.type_compatibility !== undefined ? parseFloat(breakdown.type_compatibility) : (isSame ? 1.0 : 0.0);
+        if (typeVal && typeFill) {
+          typeVal.textContent = typeComp.toFixed(2);
+          typeFill.style.width = `${Math.min(100, Math.max(0, typeComp * 100))}%`;
+        }
+
+        const relOverlap = breakdown.structural_similarity !== undefined ? parseFloat(breakdown.structural_similarity) : null;
+        if (relVal && relFill) {
+          if (relOverlap !== null) {
+            relVal.textContent = relOverlap.toFixed(2);
+            relFill.style.width = `${Math.min(100, Math.max(0, relOverlap * 100))}%`;
+          } else {
+            relVal.textContent = 'N/A';
+            relFill.style.width = '0%';
+          }
         }
 
         jsonBox.textContent = JSON.stringify(v, null, 2);
@@ -1682,8 +1969,29 @@ function initAlignmentVerifier() {
     }, 1800);
   }
 
+  async function persistDecision(decision, reason) {
+    const src = document.getElementById('srcLabel')?.textContent?.trim() || document.getElementById('sourceEntityInput')?.value?.trim() || '';
+    const tgt = document.getElementById('tgtLabel')?.textContent?.trim() || document.getElementById('targetEntityInput')?.value?.trim() || '';
+    const scoreVal = parseFloat(document.getElementById('similarityRange')?.value || '0.88');
+    try {
+      await fetch('/api/alignment/decision', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          source_entity: src,
+          candidate_entity: tgt,
+          decision: decision,
+          reason: reason,
+          confidence: scoreVal,
+        }),
+      });
+    } catch (err) {
+      console.warn('Backend decision persistence error:', err);
+    }
+  }
+
   if (acceptBtn) {
-    acceptBtn.addEventListener('click', () => {
+    acceptBtn.addEventListener('click', async () => {
       outcomeBadge.className = 'outcome-badge same';
       outcomeBadge.textContent = 'ACCEPTED: SAME_ENTITY (APPROVED)';
       if (modelReasoning) {
@@ -1696,12 +2004,13 @@ function initAlignmentVerifier() {
         confirmedEl.style.display = 'block';
       }
       announceA11y('Decision approved as same entity. Advancing to next candidate pair.');
+      await persistDecision('ACCEPT_SAME', 'Human expert approved canonical merge');
       scheduleAdvance();
     });
   }
 
   if (rejectBtn) {
-    rejectBtn.addEventListener('click', () => {
+    rejectBtn.addEventListener('click', async () => {
       outcomeBadge.className = 'outcome-badge different';
       outcomeBadge.textContent = 'REJECTED: DIFFERENT_ENTITY (OVERRIDE)';
       if (modelReasoning) {
@@ -1714,12 +2023,13 @@ function initAlignmentVerifier() {
         confirmedEl.style.display = 'block';
       }
       announceA11y('Decision marked as different entity. Advancing to next candidate pair.');
+      await persistDecision('MARK_DIFFERENT', 'Human expert marked disjoint');
       scheduleAdvance();
     });
   }
 
   if (requeueBtn) {
-    requeueBtn.addEventListener('click', () => {
+    requeueBtn.addEventListener('click', async () => {
       outcomeBadge.className = 'outcome-badge abstain';
       outcomeBadge.textContent = 'QUARANTINED FOR REVIEW';
       if (modelReasoning) {
@@ -1732,24 +2042,121 @@ function initAlignmentVerifier() {
         confirmedEl.style.display = 'block';
       }
       announceA11y('Candidate quarantined for review. Advancing to next candidate pair.');
+      await persistDecision('FLAG_REVIEW', 'Human expert quarantined for ontological review');
       scheduleAdvance();
     });
   }
 }
 
 // ==========================================================================
-// 7. Policy Helper Modal
+// 7. Policy Helper Modal & Application Error Modal (WCAG 2.1 AA Compliant)
 // ==========================================================================
+let lastFocusedElementBeforeModal = null;
+
+function showErrorModal(title, message, remedy = null) {
+  lastFocusedElementBeforeModal = document.activeElement;
+  const modal = document.getElementById('appErrorModal');
+  const titleEl = document.getElementById('appErrorModalTitle');
+  const msgEl = document.getElementById('appErrorModalMessage');
+  const remedyBox = document.getElementById('appErrorModalRemedy');
+  const remedyEl = document.getElementById('appErrorModalRemedyText');
+  const closeBtn = document.getElementById('closeAppErrorModalBtn');
+
+  if (modal && titleEl && msgEl) {
+    titleEl.textContent = title || 'Action Required';
+    msgEl.textContent = message || 'An unexpected condition occurred.';
+    if (remedy && remedyBox && remedyEl) {
+      remedyEl.textContent = remedy;
+      remedyBox.style.display = 'block';
+    } else if (remedyBox) {
+      remedyBox.style.display = 'none';
+    }
+    if (typeof modal.showModal === 'function') {
+      modal.showModal();
+    } else {
+      modal.setAttribute('open', '');
+    }
+    if (closeBtn) closeBtn.focus();
+    announceA11y(`Alert: ${title}. ${message}`);
+  } else {
+    // Graceful fallback if modal not found in DOM
+    window.alert(`${title}\n\n${message}`);
+  }
+}
+
+function initAppErrorModal() {
+  const modal = document.getElementById('appErrorModal');
+  const closeBtn = document.getElementById('closeAppErrorModalBtn');
+  if (!modal) return;
+
+  function closeModal() {
+    if (typeof modal.close === 'function') {
+      modal.close();
+    } else {
+      modal.removeAttribute('open');
+    }
+    if (lastFocusedElementBeforeModal && typeof lastFocusedElementBeforeModal.focus === 'function') {
+      lastFocusedElementBeforeModal.focus();
+    }
+  }
+
+  if (closeBtn) {
+    closeBtn.addEventListener('click', closeModal);
+  }
+  modal.addEventListener('click', (e) => {
+    if (e.target === modal) {
+      closeModal();
+    }
+  });
+  modal.addEventListener('cancel', () => {
+    if (lastFocusedElementBeforeModal && typeof lastFocusedElementBeforeModal.focus === 'function') {
+      setTimeout(() => lastFocusedElementBeforeModal.focus(), 50);
+    }
+  });
+}
+
 function initPolicyHelperModal() {
   const openBtn = document.getElementById('openPolicyHelperBtn');
   const closeBtn = document.getElementById('closePolicyHelperBtn');
   const modal = document.getElementById('policyHelper');
+  let lastPolicyFocused = null;
+
+  function closePolicy() {
+    if (typeof modal.close === 'function') {
+      modal.close();
+    } else {
+      modal.removeAttribute('open');
+    }
+    if (lastPolicyFocused && typeof lastPolicyFocused.focus === 'function') {
+      lastPolicyFocused.focus();
+    }
+  }
 
   if (openBtn && modal) {
-    openBtn.addEventListener('click', () => modal.showModal());
+    openBtn.addEventListener('click', () => {
+      lastPolicyFocused = document.activeElement;
+      if (typeof modal.showModal === 'function') {
+        modal.showModal();
+      } else {
+        modal.setAttribute('open', '');
+      }
+      if (closeBtn) closeBtn.focus();
+    });
   }
   if (closeBtn && modal) {
-    closeBtn.addEventListener('click', () => modal.close());
+    closeBtn.addEventListener('click', closePolicy);
+  }
+  if (modal) {
+    modal.addEventListener('click', (e) => {
+      if (e.target === modal) {
+        closePolicy();
+      }
+    });
+    modal.addEventListener('cancel', () => {
+      if (lastPolicyFocused && typeof lastPolicyFocused.focus === 'function') {
+        setTimeout(() => lastPolicyFocused.focus(), 50);
+      }
+    });
   }
 }
 
@@ -1886,14 +2293,131 @@ function initKeyboardNavigation() {
       }
     }
 
-    // Escape closes policy modal
+    // Escape closes any open modal dialogs with focus restoration
     if (e.key === 'Escape') {
-      const modal = document.getElementById('policyHelper');
-      if (modal && modal.open) {
-        modal.close();
+      const errModal = document.getElementById('appErrorModal');
+      if (errModal && (errModal.open || errModal.hasAttribute('open'))) {
+        if (typeof errModal.close === 'function') errModal.close();
+        else errModal.removeAttribute('open');
+        if (lastFocusedElementBeforeModal && typeof lastFocusedElementBeforeModal.focus === 'function') {
+          lastFocusedElementBeforeModal.focus();
+        }
+      }
+      const policyModal = document.getElementById('policyHelper');
+      if (policyModal && (policyModal.open || policyModal.hasAttribute('open'))) {
+        if (typeof policyModal.close === 'function') policyModal.close();
+        else policyModal.removeAttribute('open');
       }
     }
   });
+}
+
+
+// ==========================================================================
+// 7.5 Target Disease Dynamic Detection & Population
+// ==========================================================================
+async function populateDetectedDiseases(manual = false) {
+  const datalist = document.getElementById('targetDiseaseDatalist');
+  const badge = document.getElementById('detectedDiseasesCountBadge');
+  const diseaseInput = document.getElementById('targetDiseaseInput');
+  if (!datalist) return;
+
+  const standardPresets = [
+    { id: "MONDO:0005148", label: "Type 2 Diabetes Mellitus" },
+    { id: "MONDO:0005267", label: "EGFR Malignancy / Lung Neoplasm" },
+    { id: "MONDO:0004975", label: "Alzheimer Disease" },
+    { id: "MONDO:0007254", label: "Breast Cancer" },
+    { id: "MONDO:0005180", label: "Parkinson Disease" },
+    { id: "MONDO:0005010", label: "Cardiomyopathy" },
+    { id: "DOID:162", label: "Cancer" }
+  ];
+
+  let detectedList = [];
+  try {
+    const res = await fetch('/api/diseases/detected');
+    if (res.ok) {
+      const data = await res.json();
+      if (data.status === 'success' && Array.isArray(data.diseases)) {
+        detectedList = data.diseases;
+      }
+    }
+  } catch (e) {
+    // Fallback to client-side graph inspection if API unreachable
+    const activeNodes = appState.graphs.active?.nodes || [];
+    const activeEdges = appState.graphs.active?.edges || [];
+    const edgeTargets = new Set();
+    activeEdges.forEach(ed => {
+      if (String(ed.label || '').toLowerCase().includes('associated_with')) {
+        edgeTargets.add(String(ed.to || ''));
+        edgeTargets.add(String(ed.from || ''));
+      }
+    });
+    activeNodes.forEach(n => {
+      const nId = String(n.id || '');
+      const nLabel = String(n.label || nId);
+      const isDis = edgeTargets.has(nId) ||
+        ['MONDO:', 'DOID:', 'EFO:', 'HP:'].some(p => nId.toUpperCase().startsWith(p)) ||
+        ['diabetes', 'cancer', 'malignancy', 'neoplasm', 'syndrome', 'disease'].some(t => nLabel.toLowerCase().includes(t));
+      if (isDis && nId) {
+        detectedList.push({ id: nId, label: nLabel, source: 'active_graph' });
+      }
+    });
+  }
+
+  // Deduplicate by ID
+  const map = new Map();
+  detectedList.forEach(d => {
+    map.set(d.id, { id: d.id, label: d.label, inGraph: true });
+  });
+
+  standardPresets.forEach(p => {
+    if (!map.has(p.id)) {
+      map.set(p.id, { id: p.id, label: p.label, inGraph: false });
+    }
+  });
+
+  const combined = Array.from(map.values());
+  const detectedCount = detectedList.length;
+
+  // Render options in datalist
+  datalist.innerHTML = '';
+  combined.forEach(item => {
+    const opt = document.createElement('option');
+    opt.value = item.id;
+    opt.textContent = `${item.inGraph ? '⭐ [In Graph] ' : ''}${item.label} (${item.id})`;
+    datalist.appendChild(opt);
+  });
+
+  // Update badge
+  if (badge) {
+    if (detectedCount > 0) {
+      badge.textContent = `${detectedCount} IN GRAPH`;
+      badge.style.background = 'rgba(34, 197, 94, 0.2)';
+      badge.style.color = '#22c55e';
+      badge.style.borderColor = 'rgba(34, 197, 94, 0.4)';
+    } else {
+      badge.textContent = `${standardPresets.length} PRESETS`;
+      badge.style.background = 'rgba(255, 107, 0, 0.15)';
+      badge.style.color = 'var(--primary-orange)';
+      badge.style.borderColor = 'rgba(255, 107, 0, 0.3)';
+    }
+  }
+
+  // If input is empty or matches a default, pick the first in-graph disease
+  if (diseaseInput && detectedList.length > 0) {
+    if (!diseaseInput.value || diseaseInput.value === 'MONDO:0005148') {
+      diseaseInput.value = detectedList[0].id;
+    }
+  }
+
+  if (manual) {
+    showToast(
+      detectedCount > 0
+        ? `Detected ${detectedCount} disease target(s) from graph.`
+        : `No disease targets found in current graph. Showing standard presets.`,
+      detectedCount > 0 ? "success" : "info"
+    );
+  }
 }
 
 // ==========================================================================
@@ -1906,6 +2430,13 @@ function initPipelineManager() {
   const backupBtn = document.getElementById('createBackupBtn');
   const manifestJson = document.getElementById('manifestJson');
   const stepBadges = document.querySelectorAll('.step-badge');
+  const rescanDiseasesBtn = document.getElementById('rescanDiseasesBtn');
+
+  // Initial disease population
+  populateDetectedDiseases();
+  if (rescanDiseasesBtn) {
+    rescanDiseasesBtn.addEventListener('click', () => populateDetectedDiseases(true));
+  }
 
   async function runPipelineTask(taskFn) {
     if (appState.operations.pipelineInProgress) return;
@@ -1948,6 +2479,7 @@ function initPipelineManager() {
           }
         });
         await loadActiveGraphData();
+        populateDetectedDiseases();
         announceA11y('13-stage E2E pipeline execution completed successfully.');
       } else {
         manifestJson.textContent = `Pipeline error: ${data.message || 'Execution failed'}`;
@@ -1959,7 +2491,8 @@ function initPipelineManager() {
 
   drugBtn.addEventListener('click', () => runPipelineTask(async () => {
     resetSteps();
-    const targetDisease = document.getElementById('targetDiseaseSelect')?.value || 'MONDO:0005148';
+    const diseaseInputEl = document.getElementById('targetDiseaseInput');
+    const targetDisease = (diseaseInputEl?.value || document.getElementById('targetDiseaseSelect')?.value || 'MONDO:0005148').trim();
     manifestJson.textContent = `Executing Drug Repurposing Pilot graph traversal for ${targetDisease}...`;
     const section = document.getElementById('drugRepurposingSection');
     const grid = document.getElementById('hypothesesGrid');
@@ -2105,6 +2638,10 @@ function initAnalyticsDashboard() {
         document.getElementById('recall20Val').textContent = `${(m.candidate_generation.recall_at_20 * 100).toFixed(1)}%`;
         document.getElementById('recall50Val').textContent = `${(m.candidate_generation.recall_at_50 * 100).toFixed(1)}%`;
         document.getElementById('f1Val').textContent = `${(m.resolution.f1 * 100).toFixed(1)}%`;
+        const f1Sub = document.getElementById('f1Subtext');
+        if (f1Sub && m.resolution.precision !== undefined && m.resolution.recall !== undefined) {
+          f1Sub.textContent = `Precision: ${(m.resolution.precision * 100).toFixed(0)}% • Recall: ${(m.resolution.recall * 100).toFixed(0)}%`;
+        }
 
         document.getElementById('p50Val').textContent = `${m.operations.p50_latency_ms.toFixed(1)} ms`;
         document.getElementById('p95Val').textContent = `${m.operations.p95_latency_ms.toFixed(1)} ms`;

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import difflib
 import re
+from collections import defaultdict
 from dataclasses import dataclass, field
 
 from contracts.embeddings import (
@@ -234,11 +235,60 @@ class CandidateFinder:
             vectors_a = dict(zip(graph_a.entities.keys(), embeddings_a, strict=False))
             vectors_b = dict(zip(graph_b.entities.keys(), embeddings_b, strict=False))
 
+        # Inverted index for candidate narrowing (PRF-002)
+        b_id_map: dict[str, list[str]] = defaultdict(list)
+        b_canonical_map: dict[str, list[str]] = defaultdict(list)
+        b_token_map: dict[str, list[str]] = defaultdict(list)
+        b_neighbor_label_map: dict[str, list[str]] = defaultdict(list)
+
+        for b_eid, b_ent in graph_b.entities.items():
+            b_id_map[b_eid].append(b_eid)
+            b_canonical_map[b_ent.id.canonical].append(b_eid)
+            b_l_norm = norm_labels_b[b_eid]
+            for tok in b_l_norm.split():
+                if len(tok) >= 3:
+                    b_token_map[tok].append(b_eid)
+            for n in adj_b.get(b_eid, set()):
+                n_lbl = norm_labels_b.get(n, normalize_label_text(n, role_suffixes))
+                if n_lbl:
+                    b_neighbor_label_map[n_lbl].append(b_eid)
+
         for s_id, s_ent in graph_a.entities.items():
             s_label_norm = norm_labels_a[s_id]
             s_neighbors = adj_a.get(s_id, set())
 
-            for t_id, t_ent in graph_b.entities.items():
+            should_index_filter = (
+                len(graph_a.entities) * len(graph_b.entities) > 1000
+                and not strategy.enable_embeddings
+            )
+            if should_index_filter:
+                candidate_b_ids: set[str] = set()
+                candidate_b_ids.update(b_id_map.get(s_id, []))
+                candidate_b_ids.update(b_canonical_map.get(s_ent.id.canonical, []))
+                for et in self.domain_config.entity_types:
+                    for key in et.identity_keys:
+                        prop_key_a = (s_id, key)
+                        if prop_key_a in graph_a.literal_properties:
+                            for val in graph_a.literal_properties[prop_key_a]:
+                                lookup_key = (key, str(val).strip().lower())
+                                if lookup_key in id_key_map_b:
+                                    candidate_b_ids.update(id_key_map_b[lookup_key])
+                for tok in s_label_norm.split():
+                    if len(tok) >= 3 and tok in b_token_map:
+                        candidate_b_ids.update(b_token_map[tok])
+                for n in s_neighbors:
+                    n_lbl = norm_labels_a.get(n, normalize_label_text(n, role_suffixes))
+                    if n_lbl in b_neighbor_label_map:
+                        candidate_b_ids.update(b_neighbor_label_map[n_lbl])
+                target_entities = [
+                    (tid, graph_b.entities[tid])
+                    for tid in candidate_b_ids
+                    if tid in graph_b.entities
+                ]
+            else:
+                target_entities = list(graph_b.entities.items())
+
+            for t_id, t_ent in target_entities:
                 pair_key = (s_id, t_id)
                 if pair_key in seen_pairs:
                     continue
@@ -283,7 +333,9 @@ class CandidateFinder:
                 if strategy.enable_label_similarity:
                     if s_label_norm and t_label_norm:
                         if s_label_norm == t_label_norm:
-                            scores["label_similarity"] = 0.95
+                            scores["label_similarity"] = getattr(
+                                strategy, "exact_label_match_score", 0.95
+                            )
                             evidence.append(f"Normalized label exact match: '{s_label_norm}'")
                         else:
                             sim = calculate_string_similarity(s_label_norm, t_label_norm)
@@ -296,7 +348,9 @@ class CandidateFinder:
                                 evidence.append(
                                     f"String/token similarity: {combined_label_sim:.2f} ('{s_label_norm}' vs '{t_label_norm}')"
                                 )
-                            elif s_label_norm in t_label_norm or t_label_norm in s_label_norm:
+                            elif min(len(s_label_norm), len(t_label_norm)) >= getattr(
+                                strategy, "min_substring_length", 3
+                            ) and (s_label_norm in t_label_norm or t_label_norm in s_label_norm):
                                 substring_score = getattr(
                                     strategy, "label_substring_match_score", 0.75
                                 )
@@ -335,7 +389,8 @@ class CandidateFinder:
                             0.0, min(1.0, sum(u * v for u, v in zip(vec_a, vec_b, strict=False)))
                         )
                         embed_threshold = getattr(strategy, "embedding_threshold", 0.75)
-                        if cos_sim >= embed_threshold or (scores and cos_sim >= 0.40):
+                        composite_floor = getattr(strategy, "composite_embedding_floor", 0.40)
+                        if cos_sim >= embed_threshold or (scores and cos_sim >= composite_floor):
                             scores["embedding_similarity"] = round(cos_sim, 4)
                             evidence.append(
                                 f"Embedding vector similarity: {cos_sim:.4f} "

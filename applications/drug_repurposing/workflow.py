@@ -6,6 +6,8 @@ Separates production, hypothesis, predicted, and rejected assertion layers.
 
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel, ConfigDict, Field
 
 from core.assertions.assertion import Assertion
@@ -119,3 +121,160 @@ class DrugRepurposingPipeline:
                     hypotheses.append(hyp)
 
         return hypotheses
+
+
+def extract_detected_diseases(
+    active_graph: dict[str, Any],
+    assertion_store: Any = None,
+) -> list[dict[str, Any]]:
+    """Extract detected disease entities from active graph and assertion store."""
+    detected_map: dict[str, dict[str, Any]] = {}
+
+    # 1. Map associated_with edges in active graph
+    disease_candidates_from_edges: set[str] = set()
+    for edge in active_graph.get("edges", []):
+        pred = str(edge.get("label", "")).lower()
+        if "associated_with" in pred:
+            to_val = str(edge.get("to", "")).strip()
+            from_val = str(edge.get("from", "")).strip()
+            if to_val:
+                disease_candidates_from_edges.add(to_val)
+            if from_val:
+                disease_candidates_from_edges.add(from_val)
+
+    # 2. Inspect active graph nodes
+    for node in active_graph.get("nodes", []):
+        n_id = str(node.get("id", "")).strip()
+        n_label = str(node.get("label", "")).strip() or n_id
+        n_canon = str(node.get("canonical_id", "")).strip()
+        c_up = n_id.upper()
+
+        is_disease = (
+            n_id in disease_candidates_from_edges
+            or any(c_up.startswith(p) for p in ("MONDO:", "DOID:", "EFO:", "HP:"))
+            or any(
+                term in n_label.lower()
+                for term in (
+                    "diabetes",
+                    "cancer",
+                    "malignancy",
+                    "neoplasm",
+                    "syndrome",
+                    "disease",
+                    "disorder",
+                )
+            )
+        )
+        if is_disease and n_id:
+            detected_map[n_id] = {
+                "id": n_id,
+                "label": n_label,
+                "canonical_id": n_canon or n_id,
+                "source": "active_graph",
+            }
+
+    # 3. Inspect assertions in assertion_store as supplementary source
+    if assertion_store is not None:
+        try:
+            if hasattr(assertion_store, "query_assertions"):
+                matched_assertions = assertion_store.query_assertions("associated_with", limit=100)
+            else:
+                matched_assertions = []
+            for a in matched_assertions:
+                s_id = a.subject.canonical if hasattr(a.subject, "canonical") else str(a.subject)
+                o_id = (
+                    a.object.canonical
+                    if hasattr(a, "object") and hasattr(a.object, "canonical")
+                    else str(getattr(a, "object", ""))
+                )
+                for cand in (o_id, s_id):
+                    c_up = cand.upper()
+                    if any(c_up.startswith(p) for p in ("MONDO:", "DOID:", "EFO:", "HP:")):
+                        if cand not in detected_map:
+                            detected_map[cand] = {
+                                "id": cand,
+                                "label": cand,
+                                "canonical_id": cand,
+                                "source": "assertion_store",
+                            }
+        except Exception:
+            pass
+
+    return list(detected_map.values())
+
+
+def run_drug_repurposing_pipeline(
+    data: dict[str, Any],
+    context: dict[str, Any],
+) -> dict[str, Any]:
+    """Execute drug repurposing pipeline from request payload and system context."""
+    assertion_store = context.get("assertion_store")
+    graph_store = context.get("graph_store")
+    projection_store = context.get("projection_store")
+
+    run_id = str(data.get("run_id", "run_web_001"))
+    raw_disease = data.get("target_disease")
+    if not raw_disease:
+        # Dynamically discover in-graph disease candidates if none specified
+        active_graph = (
+            graph_store.get_active()
+            if graph_store and hasattr(graph_store, "get_active")
+            else {"nodes": [], "edges": []}
+        )
+        detected = extract_detected_diseases(active_graph, assertion_store)
+        if detected:
+            raw_disease = str(detected[0]["id"])
+        else:
+            raise ValueError(
+                "Missing required 'target_disease' parameter and no candidate disease entities found in graph."
+            )
+    if ":" in raw_disease:
+        ns, val = raw_disease.split(":", 1)
+        disease_id = Identifier(namespace=ns, value=val)
+    else:
+        disease_id = Identifier(namespace="MONDO", value=raw_disease)
+
+    pipeline = DrugRepurposingPipeline(
+        agent_id=Identifier(namespace="SYS", value="AGENT_WEB"),
+        activity_id=Identifier(namespace="SYS", value=f"ACT_REPURPOSE_{run_id}"),
+    )
+
+    prod_assertions: list[Assertion] = []
+    release_id = data.get("release_id")
+    if assertion_store:
+        if release_id:
+            prod_assertions = list(assertion_store.get_by_release(release_id))
+        else:
+            if projection_store:
+                active_projections = projection_store.get_all_active()
+                if active_projections:
+                    for proj in active_projections:
+                        fetched = list(assertion_store.get_by_release(proj.release_id))
+                        if fetched:
+                            prod_assertions.extend(fetched)
+            if not prod_assertions and graph_store and hasattr(graph_store, "_session"):
+                with graph_store._session() as conn:
+                    rel_row = conn.execute(
+                        "SELECT release_id FROM releases ORDER BY rowid DESC LIMIT 1"
+                    ).fetchone()
+                    if rel_row:
+                        prod_assertions = list(
+                            assertion_store.get_by_release(rel_row["release_id"])
+                        )
+            if not prod_assertions and hasattr(assertion_store, "_session"):
+                with assertion_store._session() as conn:
+                    rows = conn.execute(
+                        "SELECT * FROM assertions ORDER BY created_at ASC"
+                    ).fetchall()
+                    prod_assertions = [assertion_store._row_to_assertion(r) for r in rows]
+
+    layers = AssertionStoreLayers(production=prod_assertions)
+    hypotheses = pipeline.generate_hypotheses(target_disease_id=disease_id, layers=layers)
+
+    return {
+        "status": "success",
+        "pipeline_type": "drug_repurposing",
+        "target_disease": disease_id.canonical,
+        "hypotheses_generated": len(hypotheses),
+        "hypotheses": [h.model_dump(mode="json") for h in hypotheses],
+    }

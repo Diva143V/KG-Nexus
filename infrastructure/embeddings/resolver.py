@@ -6,6 +6,7 @@ and match strategy configuration, enforcing strict fail-closed availability.
 
 from __future__ import annotations
 
+import threading
 from typing import TYPE_CHECKING
 
 from contracts.embeddings import register_embedding_resolver
@@ -20,13 +21,15 @@ from infrastructure.embeddings.test_provider import DeterministicTestEmbeddingPr
 if TYPE_CHECKING:
     from sdk.domain_config import MatchStrategyConfig
 
+_OVERRIDE_LOCK = threading.Lock()
 _OVERRIDE_PROVIDER: EmbeddingProvider | None = None
 
 
 def set_override_embedding_provider(provider: EmbeddingProvider | None) -> None:
     """Set a global override provider (used for test isolation)."""
     global _OVERRIDE_PROVIDER
-    _OVERRIDE_PROVIDER = provider
+    with _OVERRIDE_LOCK:
+        _OVERRIDE_PROVIDER = provider
 
 
 def get_embedding_provider(
@@ -48,8 +51,9 @@ def get_embedding_provider(
     Raises:
         EmbeddingProviderUnavailableError: If the resolved provider is not reachable/installed.
     """
-    if _OVERRIDE_PROVIDER is not None:
-        return _OVERRIDE_PROVIDER
+    with _OVERRIDE_LOCK:
+        if _OVERRIDE_PROVIDER is not None:
+            return _OVERRIDE_PROVIDER
 
     p_name = provider_name or (strategy.embedding_provider if strategy else "auto")
     m_id = model_id or (strategy.embedding_model_id if strategy else "BAAI/bge-large-en-v1.5")
