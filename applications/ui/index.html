@@ -1,24 +1,43 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="light">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <script>
+    /* Anti-FOUC: apply the stored theme before first paint.
+       Intentionally inline (CSP-hashed, same-origin, no CDN). */
+    try{var t=localStorage.getItem('kgnexus-theme');if(t==='light'||t==='dark'){document.documentElement.setAttribute('data-theme',t);}}catch(e){}
+  </script>
   <meta name="description" content="Hybrid Knowledge Graph Platform - ingest, fuse, explore, verify, and release multi-source knowledge graphs with full provenance tracing.">
   <meta name="theme-color" content="#09090b">
   <title>Hybrid Knowledge Graph Platform</title>
   <link rel="stylesheet" href="styles.css">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-  <script type="text/javascript" src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+  <!-- Fonts: system stack only. The strict same-origin CSP deliberately
+       blocks third-party font CDNs (no-CDN policy). -->
+  <script type="text/javascript" src="/vendor/vis-network.min.js"></script>
 </head>
 <body>
   <a class="skip-link" href="#mainContent">Skip to main content</a>
   <noscript>
     <p class="noscript-warning">JavaScript is required for this platform. Enable JavaScript and reload to ingest, fuse, and explore knowledge graphs.</p>
   </noscript>
+
+  <!-- Boot screen: ambient knowledge-graph canvas while the API warms up.
+     Removed once /health responds; static frame under reduced motion. -->
+  <div class="boot-screen" id="bootScreen" aria-hidden="true">
+    <canvas class="boot-graph-canvas" id="bootGraphCanvas"></canvas>
+    <div class="boot-core">
+      <div class="boot-mark" aria-hidden="true">KG</div>
+      <p class="boot-status" id="bootStatusText">Waking the graph engine…</p>
+      <div class="boot-track" role="progressbar" aria-label="Loading the knowledge graph platform" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="bootProgressBar">
+        <div class="boot-track-fill" id="bootTrackFill"></div>
+      </div>
+    </div>
+  </div>
+
   <div class="app-container">
     <!-- Top Header Bar -->
+
     <header class="top-header" role="banner">
       <div class="brand">
         <div class="brand-icon">KG</div>
@@ -34,7 +53,7 @@
             <span class="pulse-dot" aria-hidden="true"></span> Ollama Model:
           </label>
           <select id="ollamaModelSelect" class="ollama-select" aria-label="Select active local Ollama model">
-            <option value="">Detecting models...</option>
+            <option value="">Detecting models…</option>
           </select>
         </div>
         <div class="status-badge" id="systemHealthBadge" title="System Storage Engine">
@@ -43,6 +62,11 @@
         <div class="status-badge embeddings-badge" id="embeddingsBadge" title="Embedding Provider Status">
           <span class="embeddings-text" id="embeddingsText">Embeddings: Pluggable</span>
         </div>
+        <a href="alignment_studio.html" class="status-badge studio-link" title="Open Dual-Canvas Alignment Studio">
+          <span class="badge-dot"></span>
+          <span>Expert Studio ↗</span>
+        </a>
+        <button type="button" class="status-badge theme-toggle" title="Switch color theme" aria-pressed="true">Light theme</button>
       </div>
     </header>
 
@@ -153,6 +177,21 @@
               <div class="log-line info">[System] Ready for ingestion. Select a file to parse into raw assertions.</div>
             </div>
           </div>
+
+          <div class="card status-card graph-preview-card">
+            <div class="graph-preview-header">
+              <h2>Active Graph</h2>
+              <span class="graph-preview-meta mono" id="graphPreviewStats" aria-live="polite">0 entities · 0 edges</span>
+            </div>
+            <div class="graph-preview-canvas-wrap" id="graphPreviewWrap">
+              <div class="graph-preview-empty" id="graphPreviewEmpty">
+                <p class="graph-preview-empty-title">No graph loaded yet</p>
+                <p class="graph-preview-empty-hint">Ingest a dataset and watch it take shape here.</p>
+                <button type="button" id="loadSampleIntoPreviewBtn" class="btn btn-secondary">Load Biomedical Sample</button>
+              </div>
+              <div class="graph-preview-network" id="graphPreviewNetwork" role="img" aria-label="Live preview of the active knowledge graph"></div>
+            </div>
+          </div>
         </div>
       </section>
 
@@ -167,6 +206,7 @@
               <span class="sample-label">Quick Load Samples:</span>
               <button type="button" id="loadBiomedicalSampleBtn" class="btn btn-secondary btn-chip">Load Biomedical Samples (TTL + CSV)</button>
               <button type="button" id="loadSyntheticSampleBtn" class="btn btn-secondary btn-chip">Load Synthetic Samples (JSON-LD + CSV)</button>
+              <p class="fusion-autoload-hint">No files yet? Executing fusion auto-loads the biomedical sample pair — or bring your own above.</p>
             </div>
 
             <div class="form-row">
@@ -303,6 +343,17 @@
             </div>
 
             <button type="button" id="executeFusionBtn" class="btn btn-primary fusion-execute">Execute 6-Stage Graph Fusion</button>
+            <button type="button" id="runSandboxBtn" class="btn btn-secondary fusion-execute" title="Fuse with the selected policy without persisting anything — compare outcomes before committing">Run What-If Sandbox (No Persist)</button>
+            <div class="sandbox-results" id="sandboxResults" hidden>
+              <div class="sandbox-pane">
+                <h4>Selected policy — <span class="mono" id="sandboxModeA"></span></h4>
+                <div id="sandboxStatsA"></div>
+              </div>
+              <div class="sandbox-pane">
+                <h4>Alternate policy — <span class="mono" id="sandboxModeB"></span></h4>
+                <div id="sandboxStatsB"></div>
+              </div>
+            </div>
           </div>
 
           <div class="card fusion-summary-card">
@@ -372,25 +423,23 @@
               <button type="button" id="clearQueryAndGraphBtn" class="btn btn-secondary" title="Clear Query &amp; Reset Canvas">Reset Query &amp; Canvas</button>
             </div>
 
-            <!-- Graph Entity Filter Pills Bar -->
-            <div class="graph-filter-bar" role="toolbar" aria-label="Graph entity filters">
-              <div class="filter-pills-group" id="graphFilterPills" role="radiogroup" aria-label="Filter entities by type">
+            <!-- Graph Filter Bar: chips generated from the LIVE graph + semantic search -->
+            <div class="graph-filter-bar" role="toolbar" aria-label="Graph entity filters and search">
+              <div class="semantic-search-group">
+                <div class="semantic-search-box">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <circle cx="11" cy="11" r="8"></circle>
+                    <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                  </svg>
+                  <input type="text" id="semanticSearchInput" class="semantic-search-input" placeholder="Search entities by meaning — keywords, concepts, synonyms…" aria-label="Semantic graph search" autocomplete="off" />
+                  <span class="search-engine-badge" id="searchEngineBadge" hidden></span>
+                  <button type="button" id="semanticSearchClear" class="search-clear-btn" title="Clear search and filters" hidden>&times;</button>
+                </div>
+                <div class="recommended-chips" id="recommendedChips" role="group" aria-label="Recommended filters from search results"></div>
+              </div>
+              <div class="filter-pills-group" id="graphFilterPills" role="radiogroup" aria-label="Filter entities by type (live from graph)">
                 <span class="filter-label">Filter:</span>
-                <button type="button" class="filter-pill active" data-filter="all" role="radio" aria-checked="true">
-                  All <span class="pill-count" id="pillCountAll">0</span>
-                </button>
-                <button type="button" class="filter-pill" data-filter="disease" role="radio" aria-checked="false">
-                  Diseases <span class="pill-count" id="pillCountDisease">0</span>
-                </button>
-                <button type="button" class="filter-pill" data-filter="gene" role="radio" aria-checked="false">
-                  Genes <span class="pill-count" id="pillCountGene">0</span>
-                </button>
-                <button type="button" class="filter-pill" data-filter="drug" role="radio" aria-checked="false">
-                  Drugs / Compounds <span class="pill-count" id="pillCountDrug">0</span>
-                </button>
-                <button type="button" class="filter-pill" data-filter="protein" role="radio" aria-checked="false">
-                  Proteins <span class="pill-count" id="pillCountProtein">0</span>
-                </button>
+                <!-- Chips are rendered at runtime from the active graph's real groups -->
               </div>
               <div class="graph-stats-pill" id="graphCanvasStats">
                 <span class="stat-dot" aria-hidden="true"></span>
@@ -400,6 +449,17 @@
 
             <div class="graph-viewport-wrapper">
               <div id="visGraphNetwork" class="graph-network-container"></div>
+              <div class="origin-legend" id="originLegend" aria-hidden="true">
+                <span class="legend-item"><span class="legend-dot" data-origin="a"></span>Graph A</span>
+                <span class="legend-item"><span class="legend-dot" data-origin="b"></span>Graph B</span>
+                <span class="legend-item"><span class="legend-dot" data-origin="both"></span>Shared / Merged</span>
+              </div>
+              <div class="explorer-empty" id="explorerEmpty" hidden>
+                <div class="explorer-empty-mark" aria-hidden="true">KG</div>
+                <h3 class="empty-title">The canvas is waiting for a graph</h3>
+                <p class="explorer-empty-text">Ingest and fuse a dataset — or load the sample — and nodes will land here with full lineage one click away.</p>
+                <button type="button" id="explorerLoadSampleBtn" class="btn btn-secondary">Load Biomedical Sample</button>
+              </div>
               <div class="graph-overlay-controls" role="toolbar" aria-label="Graph canvas navigation controls">
                 <button type="button" id="resetGraphView" class="btn-sm" title="Fit Entire Graph into View">Fit View</button>
                 <button type="button" id="zoomInGraphBtn" class="btn-sm" title="Zoom In on Canvas">Zoom +</button>
@@ -409,6 +469,26 @@
                 <button type="button" id="reloadActiveKgBtn" class="btn-sm" title="Reload Active Knowledge Graph Data">Reload Active KG</button>
                 <button type="button" id="fullscreenGraphView" class="btn-sm" title="Open Fullscreen Graph Explorer">Fullscreen</button>
                 <button type="button" id="clearGraphCanvasBtn" class="btn-sm btn-sm-danger" title="Clear Canvas and Inspector">Clear Canvas</button>
+              </div>
+            </div>
+
+            <!-- Time-Travel: release timeline + diff view -->
+            <div class="timetravel-panel">
+              <div class="timetravel-head">
+                <h3>Time Travel</h3>
+                <span class="timetravel-summary" id="timetravelSummary" aria-live="polite"></span>
+              </div>
+              <div class="timetravel-controls">
+                <label class="timetravel-label" for="timetravelFrom">From release</label>
+                <select id="timetravelFrom" class="input-field timetravel-select" aria-label="Baseline release for the diff"></select>
+                <label class="timetravel-label" for="timetravelTo">To release</label>
+                <select id="timetravelTo" class="input-field timetravel-select" aria-label="Comparison release for the diff"></select>
+                <button type="button" id="timetravelDiffBtn" class="btn btn-secondary">Compare Releases</button>
+              </div>
+              <p class="timetravel-empty" id="timetravelEmptyHint" hidden></p>
+              <div class="timetravel-diff" id="timetravelDiff" hidden>
+                <div class="diff-chip-row" id="diffChipRow"></div>
+                <ul class="diff-list" id="diffList" aria-live="polite"></ul>
               </div>
             </div>
           </div>
@@ -699,33 +779,46 @@
           </div>
 
           <div class="pipeline-controls-panel">
-            <h3>Pipeline Execution &amp; Target Disease Configuration</h3>
+            <h3>Graph Path Explorer &mdash; live BFS / DFS traversal</h3>
+            <p class="path-explorer-intro">Traverses the <strong>active graph as it is right now</strong> &mdash; every path is computed at request time from real nodes and edges, nothing is preset.</p>
             <div class="form-row">
-              <div class="form-group disease-selector-group">
-                <div class="field-header-row" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.35rem;">
-                  <label for="targetDiseaseInput">Target Disease for Repurposing Traversal</label>
-                  <span id="detectedDiseasesCountBadge" class="outcome-badge same" style="font-size: 0.68rem; padding: 0.15rem 0.45rem;">2 PRESETS</span>
-                </div>
-                <div class="disease-input-wrapper" style="display: flex; gap: 0.4rem;">
-                  <input type="text" id="targetDiseaseInput" class="input-field" list="targetDiseaseDatalist" placeholder="e.g. MONDO:0005148, DOID:162, or select..." value="MONDO:0005148" autocomplete="off" style="flex: 1;" />
-                  <datalist id="targetDiseaseDatalist">
-                    <option value="MONDO:0005148">Type 2 Diabetes Mellitus (MONDO:0005148)</option>
-                    <option value="MONDO:0005267">EGFR Malignancy / Lung Neoplasm (MONDO:0005267)</option>
-                    <option value="MONDO:0004975">Alzheimer Disease (MONDO:0004975)</option>
-                    <option value="MONDO:0007254">Breast Cancer (MONDO:0007254)</option>
-                    <option value="MONDO:0005180">Parkinson Disease (MONDO:0005180)</option>
-                    <option value="MONDO:0005010">Cardiomyopathy (MONDO:0005010)</option>
-                    <option value="DOID:162">Cancer (DOID:162)</option>
-                  </datalist>
-                  <button type="button" id="rescanDiseasesBtn" class="btn-sm" style="background: rgba(255,107,0,0.15); border: 1px solid var(--primary-orange); color: var(--primary-orange); white-space: nowrap; cursor: pointer; border-radius: 6px; padding: 0.3rem 0.6rem; font-size: 0.78rem;" title="Rescan active graph and assertions for diseases">Scan Graph</button>
-                </div>
-                <small class="field-hint" style="font-size: 0.72rem; color: var(--text-muted); margin-top: 0.3rem; display: block;">Auto-detected from active graph triples. You can also type any custom disease ID (e.g. MONDO, DOID, EFO).</small>
-                <!-- Hidden fallback for backward compatibility -->
-                <select id="targetDiseaseSelect" style="display: none;">
-                  <option value="MONDO:0005148">Type 2 Diabetes Mellitus (MONDO:0005148)</option>
-                  <option value="MONDO:0005267">EGFR Malignancy / Lung Neoplasm (MONDO:0005267)</option>
+              <div class="form-group">
+                <label for="pathSourceInput">From entity</label>
+                <input type="text" id="pathSourceInput" class="input-field" list="activeGraphNodesDatalist" placeholder="e.g. Metformin" autocomplete="off" />
+              </div>
+              <div class="form-group">
+                <label for="pathTargetInput">To entity</label>
+                <input type="text" id="pathTargetInput" class="input-field" list="activeGraphNodesDatalist" placeholder="e.g. Type 2 Diabetes" autocomplete="off" />
+              </div>
+              <div class="form-group form-group-narrow">
+                <label for="pathAlgorithmSelect">Strategy</label>
+                <select id="pathAlgorithmSelect" class="input-field">
+                  <option value="bfs">BFS &mdash; shortest paths</option>
+                  <option value="dfs">DFS &mdash; deep-first paths</option>
                 </select>
               </div>
+              <div class="form-group form-group-narrow">
+                <label for="pathMaxDepthInput">Max depth</label>
+                <input type="number" id="pathMaxDepthInput" class="input-field" min="1" max="8" value="4" />
+              </div>
+            </div>
+            <datalist id="activeGraphNodesDatalist"></datalist>
+            <div class="path-explorer-actions">
+              <button type="button" id="findPathsBtn" class="btn btn-primary">Find Paths</button>
+              <div class="form-group repurposing-inline">
+                <label for="targetDiseaseInput">Disease (for Repurposing Pilot)</label>
+                <input type="text" id="targetDiseaseInput" class="input-field" list="targetDiseaseDatalist" placeholder="e.g. MONDO:0005148" autocomplete="off" />
+                <datalist id="targetDiseaseDatalist"></datalist>
+              </div>
+              <span id="detectedDiseasesCountBadge" class="outcome-badge same" hidden></span>
+            </div>
+            <div class="path-results" id="pathResults" hidden>
+              <div class="path-results-head">
+                <span id="pathResultsSummary" class="path-results-summary"></span>
+              </div>
+              <div id="pathResultsList" class="path-results-list"></div>
+            </div>
+            <div class="form-row" style="margin-top: 0.75rem;">
               <div class="form-group">
                 <label for="pipelineDomainPackSelect">Domain Pack</label>
                 <select id="pipelineDomainPackSelect" class="input-field">
@@ -971,6 +1064,14 @@
   <!-- Screen Reader Live Announcement Region (WCAG AA) -->
   <div id="ariaAnnouncer" aria-live="polite" aria-atomic="true" class="visually-hidden-static" style="position: absolute; left: -9999px; width: 1px; height: 1px; overflow: hidden;"></div>
 
+  <script src="auth_client.js"></script>
+  <script src="theme.js"></script>
+  <script src="canvas_layout.js"></script>
+  <script src="boot.js"></script>
+  <script src="graph_preview.js"></script>
+  <script src="lineage.js"></script>
+  <script src="timetravel.js"></script>
+  <script src="sandbox.js"></script>
   <script src="app.js"></script>
   <script>
     /* Progressive enhancement: keeps ARIA tab state in sync with app.js class-based

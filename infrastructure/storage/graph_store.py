@@ -340,6 +340,43 @@ class GraphStore:
                 "edges": json.loads(snapshot["edges_json"]),
             }
 
+    def list_releases(self) -> list[dict[str, Any]]:
+        """All persisted releases, oldest first, for the timeline UI.
+
+        Returns release_id, created timestamp (parsed from the payload's
+        fusion_run when present), node/edge counts, and status.
+        """
+        with self._lock, self._session() as connection:
+            rows = connection.execute(
+                "SELECT release_id, payload_json, created_at FROM releases ORDER BY rowid"
+            ).fetchall()
+            # Latest status per release lives in release_status_history.
+            status_rows = connection.execute(
+                """
+                SELECT release_id, status FROM release_status_history
+                WHERE id IN (SELECT MAX(id) FROM release_status_history GROUP BY release_id)
+                """
+            ).fetchall()
+            status_by_id = {r["release_id"]: r["status"] for r in status_rows}
+            releases: list[dict[str, Any]] = []
+            for row in rows:
+                try:
+                    payload = json.loads(row["payload_json"])
+                except (TypeError, ValueError):
+                    payload = {}
+                fusion_run = payload.get("fusion_run", {})
+                created = fusion_run.get("created_at") or row["created_at"]
+                releases.append(
+                    {
+                        "release_id": row["release_id"],
+                        "created_at": created,
+                        "status": status_by_id.get(row["release_id"], "PENDING"),
+                        "nodes": len(payload.get("nodes", []) or []),
+                        "edges": len(payload.get("edges", []) or []),
+                    }
+                )
+            return releases
+
     def get_release_assertions(self, release_id: str) -> list[str]:
         with self._lock, self._session() as connection:
             rows = connection.execute(

@@ -181,9 +181,24 @@ class GraphFusionService:
             if not raw_obj and isinstance(payload.get("objects"), list) and payload["objects"]:
                 raw_obj = str(payload["objects"][0])
 
+            # Positional fallback for tabular rows with arbitrary headers
+            # (e.g. "drug,disease,mechanism"): first column is the subject,
+            # the last a relation target, and — for 3+ columns — the second
+            # column names the relation. Keeps heterogeneous spreadsheets
+            # usable without forcing users to rename columns.
+            if not raw_subj or not raw_obj:
+                values = [str(v).strip() for v in payload.values() if v is not None and str(v).strip()]
+                if len(values) >= 2:
+                    raw_subj = raw_subj or values[0]
+                    raw_obj = raw_obj or values[-1]
+                    if not raw_pred and len(values) >= 3:
+                        raw_pred = values[1]
+
             # Reject records lacking valid subject, predicate, or object
             if not raw_subj or not raw_pred or not raw_obj:
                 continue
+            if not raw_pred:
+                raw_pred = "associated_with"
 
             subj_val = sanitize_id_value(raw_subj, None)
             pred_val = sanitize_id_value(raw_pred, None)
@@ -201,6 +216,7 @@ class GraphFusionService:
                 activity_id=activity_id,
                 asserted_at=parsed_at,
                 input_resource_refs=(artifact_id,),
+                graph_origin_id=graph_id.value,
             )
             a = Assertion(
                 id=Identifier(namespace="ASSERT", value=f"{graph_id.value}_a_{idx}"),

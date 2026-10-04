@@ -117,6 +117,7 @@ class EndToEndReleasePipeline:
         run_id: str,
         raw_artifacts: list[dict[str, Any]] | None = None,
         injected_failure_stage: str | None = None,
+        on_stage: Any = None,
     ) -> EndToEndPipelineResult:
         manifest = plugin_pack.manifest
         registry = PluginRegistry()
@@ -153,6 +154,19 @@ class EndToEndReleasePipeline:
         stage_statuses: dict[str, str] = {}
         stage_evidence: dict[str, Any] = {}
         stage_timings_ms: dict[str, float] = {}
+
+        def notify_stage(stage: str, status: str, detail: dict[str, Any] | None = None) -> None:
+            """Optional per-stage callback for live telemetry (Mission Control).
+
+            ``on_stage(stage, status, detail)`` receives every transition as
+            it happens; errors in the callback never affect the pipeline.
+            """
+            if on_stage is None:
+                return
+            try:
+                on_stage(stage, status, detail or {})
+            except Exception:
+                logger.debug("on_stage callback error for %s", stage, exc_info=True)
         release_id = f"release_{run_id}"
         release_id_identifier = Identifier(namespace="REL", value=release_id)
         now_dt = datetime.now(UTC)
@@ -245,12 +259,15 @@ class EndToEndReleasePipeline:
                 ingested_artifacts.append(art)
 
             stage_statuses["ingest"] = "PASS"
+
+            notify_stage("ingest", stage_statuses["ingest"], stage_evidence.get("ingest"))
             stage_evidence["ingest"] = {
                 "artifact_count": len(ingested_artifacts),
                 "digests": [a.sha256 for a in ingested_artifacts],
             }
         except Exception as exc:
             stage_statuses["ingest"] = "FAIL"
+            notify_stage("ingest", stage_statuses["ingest"], stage_evidence.get("ingest"))
             stage_evidence["ingest"] = {"error": str(exc)}
         finally:
             stage_timings_ms["ingest"] = round((time.perf_counter() - t0) * 1000, 2)
@@ -302,6 +319,8 @@ class EndToEndReleasePipeline:
             norm_graph_b = normalizer.normalize_graph(parsed_asns_b, "graph_b")
 
             stage_statuses["normalize"] = "PASS"
+
+            notify_stage("normalize", stage_statuses["normalize"], stage_evidence.get("normalize"))
             stage_evidence["normalize"] = {
                 "schema_count": len(schemas),
                 "schemas": list(schemas.keys()),
@@ -310,6 +329,7 @@ class EndToEndReleasePipeline:
             }
         except Exception as exc:
             stage_statuses["normalize"] = "FAIL"
+            notify_stage("normalize", stage_statuses["normalize"], stage_evidence.get("normalize"))
             stage_evidence["normalize"] = {"error": str(exc)}
         finally:
             stage_timings_ms["normalize"] = round((time.perf_counter() - t0) * 1000, 2)
@@ -336,6 +356,8 @@ class EndToEndReleasePipeline:
             candidates = candidate_finder.find_candidates(norm_graph_a, norm_graph_b, activity_id)
 
             stage_statuses["candidate_generation"] = "PASS"
+
+            notify_stage("candidate_generation", stage_statuses["candidate_generation"], stage_evidence.get("candidate_generation"))
             stage_evidence["candidate_generation"] = {
                 "candidate_pairs_surfaced": len(candidates),
                 "match_methods_used": list(set(c.primary_method for c in candidates)),
@@ -343,6 +365,7 @@ class EndToEndReleasePipeline:
             }
         except Exception as exc:
             stage_statuses["candidate_generation"] = "FAIL"
+            notify_stage("candidate_generation", stage_statuses["candidate_generation"], stage_evidence.get("candidate_generation"))
             stage_evidence["candidate_generation"] = {"error": str(exc)}
         finally:
             stage_timings_ms["candidate_generation"] = round((time.perf_counter() - t0) * 1000, 2)
@@ -413,6 +436,8 @@ class EndToEndReleasePipeline:
                 )
 
             stage_statuses["assertion_creation"] = "PASS"
+
+            notify_stage("assertion_creation", stage_statuses["assertion_creation"], stage_evidence.get("assertion_creation"))
             stage_evidence["assertion_creation"] = {
                 "assertion_count": len(assertions),
                 "assertion_ids": [a.id.canonical for a in assertions],
@@ -423,6 +448,7 @@ class EndToEndReleasePipeline:
             }
         except Exception as exc:
             stage_statuses["assertion_creation"] = "FAIL"
+            notify_stage("assertion_creation", stage_statuses["assertion_creation"], stage_evidence.get("assertion_creation"))
             stage_evidence["assertion_creation"] = {"error": str(exc)}
         finally:
             stage_timings_ms["assertion_creation"] = round((time.perf_counter() - t0) * 1000, 2)
@@ -457,12 +483,15 @@ class EndToEndReleasePipeline:
             )
 
             stage_statuses["state_transitions"] = "PASS"
+
+            notify_stage("state_transitions", stage_statuses["state_transitions"], stage_evidence.get("state_transitions"))
             stage_evidence["state_transitions"] = {
                 "persisted_assertions": len(assertions),
                 "events_recorded": len(all_events),
             }
         except Exception as exc:
             stage_statuses["state_transitions"] = "FAIL"
+            notify_stage("state_transitions", stage_statuses["state_transitions"], stage_evidence.get("state_transitions"))
             stage_evidence["state_transitions"] = {"error": str(exc)}
         finally:
             stage_timings_ms["state_transitions"] = round((time.perf_counter() - t0) * 1000, 2)
@@ -485,12 +514,15 @@ class EndToEndReleasePipeline:
                     raise ValueError(f"Incomplete provenance on assertion {a.id.canonical}")
 
             stage_statuses["provenance"] = "PASS"
+
+            notify_stage("provenance", stage_statuses["provenance"], stage_evidence.get("provenance"))
             stage_evidence["provenance"] = {
                 "provenance_verified": True,
                 "agent_id": assertions[0].provenance.agent_id.canonical if assertions else "",
             }
         except Exception as exc:
             stage_statuses["provenance"] = "FAIL"
+            notify_stage("provenance", stage_statuses["provenance"], stage_evidence.get("provenance"))
             stage_evidence["provenance"] = {"error": str(exc)}
         finally:
             stage_timings_ms["provenance"] = round((time.perf_counter() - t0) * 1000, 2)
@@ -502,6 +534,7 @@ class EndToEndReleasePipeline:
             except Exception as exc:
                 logger.error("Failed to transition release %s to VALIDATING: %s", release_id, exc)
                 stage_statuses["validation"] = "FAIL"
+                notify_stage("validation", stage_statuses["validation"], stage_evidence.get("validation"))
                 stage_evidence["validation"] = {"error": f"Lifecycle transition failed: {exc}"}
 
         # --- Stage 7: Plugin Validation & Blocking Gates -----------------------
@@ -589,6 +622,8 @@ class EndToEndReleasePipeline:
                 all_events.extend(verified_events)
 
             stage_statuses["validation"] = "PASS" if all_passed else "FAIL"
+
+            notify_stage("validation", stage_statuses["validation"], stage_evidence.get("validation"))
             stage_evidence["validation"] = {
                 "validator_count": len(validators) if isinstance(validators, (list, dict)) else 0,
                 "validation_status": "VALIDATED" if all_passed else "VALIDATION_FAILED",
@@ -596,6 +631,7 @@ class EndToEndReleasePipeline:
             }
         except Exception as exc:
             stage_statuses["validation"] = "FAIL"
+            notify_stage("validation", stage_statuses["validation"], stage_evidence.get("validation"))
             stage_evidence["validation"] = {"error": str(exc)}
         finally:
             stage_timings_ms["validation"] = round((time.perf_counter() - t0) * 1000, 2)
@@ -616,6 +652,8 @@ class EndToEndReleasePipeline:
                 release_obj = self.release_manager.update_manifest(release_obj, rel_manifest)
 
             stage_statuses["release"] = "PASS"
+
+            notify_stage("release", stage_statuses["release"], stage_evidence.get("release"))
             stage_evidence["release"] = {
                 "release_id": release_id,
                 "plugin_id": manifest.plugin_id,
@@ -623,6 +661,7 @@ class EndToEndReleasePipeline:
             }
         except Exception as exc:
             stage_statuses["release"] = "FAIL"
+            notify_stage("release", stage_statuses["release"], stage_evidence.get("release"))
             stage_evidence["release"] = {"error": str(exc)}
         finally:
             stage_timings_ms["release"] = round((time.perf_counter() - t0) * 1000, 2)
@@ -689,12 +728,15 @@ class EndToEndReleasePipeline:
                 self.data_source.register_dataset(release_id, dataset)
 
             stage_statuses["rdf_snapshot"] = "PASS"
+
+            notify_stage("rdf_snapshot", stage_statuses["rdf_snapshot"], stage_evidence.get("rdf_snapshot"))
             stage_evidence["rdf_snapshot"] = {
                 "triple_count": dataset.triple_count(),
                 "graph_count": len(dataset.graphs),
             }
         except Exception as exc:
             stage_statuses["rdf_snapshot"] = "FAIL"
+            notify_stage("rdf_snapshot", stage_statuses["rdf_snapshot"], stage_evidence.get("rdf_snapshot"))
             stage_evidence["rdf_snapshot"] = {"error": str(exc)}
         finally:
             stage_timings_ms["rdf_snapshot"] = round((time.perf_counter() - t0) * 1000, 2)
@@ -734,8 +776,10 @@ class EndToEndReleasePipeline:
 
             if val_proj.is_failed:
                 stage_statuses["projection"] = "FAIL"
+                notify_stage("projection", stage_statuses["projection"], stage_evidence.get("projection"))
             else:
                 stage_statuses["projection"] = "PASS"
+                notify_stage("projection", stage_statuses["projection"], stage_evidence.get("projection"))
                 if release_obj is not None:
                     release_obj = self.release_manager.project(release_obj, at=now_dt)
 
@@ -794,6 +838,7 @@ class EndToEndReleasePipeline:
             }
         except Exception as exc:
             stage_statuses["projection"] = "FAIL"
+            notify_stage("projection", stage_statuses["projection"], stage_evidence.get("projection"))
             stage_evidence["projection"] = {"error": str(exc)}
         finally:
             stage_timings_ms["projection"] = round((time.perf_counter() - t0) * 1000, 2)
@@ -811,8 +856,10 @@ class EndToEndReleasePipeline:
             rec_proj = proj_manager.reconcile_candidate(proj_id, dataset)
             if rec_proj.is_failed:
                 stage_statuses["reconciliation"] = "FAIL"
+                notify_stage("reconciliation", stage_statuses["reconciliation"], stage_evidence.get("reconciliation"))
             else:
                 stage_statuses["reconciliation"] = "PASS"
+                notify_stage("reconciliation", stage_statuses["reconciliation"], stage_evidence.get("reconciliation"))
                 self.projection_store.update_status(proj_id.canonical, rec_proj.status.value)
                 if release_obj is not None:
                     passing_gate = ReleaseGate(
@@ -833,6 +880,7 @@ class EndToEndReleasePipeline:
             }
         except Exception as exc:
             stage_statuses["reconciliation"] = "FAIL"
+            notify_stage("reconciliation", stage_statuses["reconciliation"], stage_evidence.get("reconciliation"))
             stage_evidence["reconciliation"] = {"error": str(exc)}
         finally:
             stage_timings_ms["reconciliation"] = round((time.perf_counter() - t0) * 1000, 2)
@@ -912,6 +960,8 @@ class EndToEndReleasePipeline:
             self.graph_store.update_release_status(release_id, ReleaseStatus.PUBLISHED.value)
 
             stage_statuses["endpoint_switch"] = "PASS"
+
+            notify_stage("endpoint_switch", stage_statuses["endpoint_switch"], stage_evidence.get("endpoint_switch"))
             stage_evidence["endpoint_switch"] = {
                 "active_endpoint": f"/api/release/{run_id}",
                 "release_status": ReleaseStatus.PUBLISHED.value,
@@ -919,6 +969,7 @@ class EndToEndReleasePipeline:
             }
         except Exception as exc:
             stage_statuses["endpoint_switch"] = "FAIL"
+            notify_stage("endpoint_switch", stage_statuses["endpoint_switch"], stage_evidence.get("endpoint_switch"))
             stage_evidence["endpoint_switch"] = {"error": str(exc)}
         finally:
             stage_timings_ms["endpoint_switch"] = round((time.perf_counter() - t0) * 1000, 2)
@@ -961,12 +1012,15 @@ class EndToEndReleasePipeline:
                 raise RuntimeError("Production projection was unexpectedly deactivated")
 
             stage_statuses["rollback"] = "PASS"
+
+            notify_stage("rollback", stage_statuses["rollback"], stage_evidence.get("rollback"))
             stage_evidence["rollback"] = {
                 "canary_verified": True,
                 "production_projection_status": "ACTIVE",
             }
         except Exception as exc:
             stage_statuses["rollback"] = "FAIL"
+            notify_stage("rollback", stage_statuses["rollback"], stage_evidence.get("rollback"))
             stage_evidence["rollback"] = {"error": str(exc)}
         finally:
             stage_timings_ms["rollback"] = round((time.perf_counter() - t0) * 1000, 2)

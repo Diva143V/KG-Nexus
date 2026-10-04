@@ -106,6 +106,114 @@ async function readJsonOrThrow(res) {
   return data;
 }
 
+// Theme-aware canvas palette for the vis-network canvases (explorer, active
+// graph preview). Canvas rendering cannot use CSS variables, so sample the
+// resolved token values at draw time and re-render on kgnexus-themechange.
+function kgCanvasPalette() {
+  const cs = getComputedStyle(document.documentElement);
+  const token = (name, fallback) => (cs.getPropertyValue(name) || '').trim() || fallback;
+  const isLight = document.documentElement.getAttribute('data-theme') === 'light';
+  return {
+    isLight,
+    node: token('--border-strong', isLight ? '#afb8c1' : '#465061'),
+    nodeBorder: token('--border-default', isLight ? '#d0d7de' : '#333a46'),
+    accent: token('--primary-orange', isLight ? '#0969da' : '#d9862c'),
+    accentHover: token('--primary-orange-hover', isLight ? '#0550ae' : '#f09a3e'),
+    label: token('--text-secondary', isLight ? '#57606a' : '#a8b0bd'),
+    labelStrong: token('--text-primary', isLight ? '#1f2328' : '#e6e9ef'),
+    surface: token('--surface-base', isLight ? '#f6f8fa' : '#16181d'),
+    edgeOpacity: isLight ? 0.85 : 0.8,
+  };
+}
+
+// ---- Graph origin coloring (fusion provenance) --------------------------
+// The fusion engine records which input graph each assertion came from
+// (Provenance.graph_origin_id, e.g. "graph_a"/"e2e_a"). Nodes/edges carry an
+// `origin` field: "a", "b", or "both" for material merged from both inputs.
+// Colors stay readable in both themes; unknown provenance renders as shared.
+function kgGraphOrigin(e) {
+  const raw = String(e.graph_origin_id || e.source_graph || '').toLowerCase();
+  const hasA = /(^|[^a-z])a($|[^a-z])|_a_|-a-|graph_a/.test(raw);
+  const hasB = /(^|[^a-z])b($|[^a-z])|_b_|-b-|graph_b/.test(raw);
+  if (hasA && hasB) return 'both';
+  if (hasB) return 'b';
+  if (hasA) return 'a';
+  return 'both'; // unknown provenance renders as shared/canonical
+}
+
+function kgOriginPalette() {
+  const pal = kgCanvasPalette();
+  if (pal.isLight) {
+    return { a: '#0969da', b: '#9a6700', both: pal.node };
+  }
+  return { a: '#58b6ff', b: '#d2a8ff', both: pal.node };
+}
+
+function isLightStroke() {
+  return document.documentElement.getAttribute('data-theme') === 'light';
+}
+
+// RDF predicate IRIs are unreadable on canvas — show the local name
+// ("http://…bio#treats" -> "treats", "rdf-syntax-ns#type" -> "is a").
+function kgHumanPredicate(label) {
+  const raw = String(label || '');
+  if (!raw) return '';
+  if (!raw.includes('://')) return raw;
+  if (/rdf-syntax-ns#type$/.test(raw)) return 'is a';
+  const local = raw.split('#').pop().split('/').pop();
+  return (local || raw).replace(/_/g, ' ');
+}
+
+// Shared node/edge dataset builders so the explorer and the popout stay in sync.
+function kgStyledNodes(nodes, isLargeGraph) {
+  const pal = kgCanvasPalette();
+  const origins = kgOriginPalette();
+  return (nodes || []).map(n => {
+    const origin = kgGraphOrigin(n);
+    const fill = origins[origin] || pal.node;
+    return {
+      id: n.id,
+      label: isLargeGraph ? n.label : `${n.label}
+(${n.group || 'Entity'})`,
+      origin,
+      color: {
+        background: fill,
+        border: pal.nodeBorder,
+        highlight: { background: pal.accent, border: pal.accentHover },
+        hover: { background: fill, border: pal.accentHover },
+      },
+      size: isLargeGraph ? KG_GRAPH_LAYOUT.large.nodeSize : KG_GRAPH_LAYOUT.small.nodeSize,
+      font: { color: pal.labelStrong, size: isLargeGraph ? KG_GRAPH_LAYOUT.large.nodeFont : KG_GRAPH_LAYOUT.small.nodeFont, strokeWidth: isLightStroke() ? KG_GRAPH_LAYOUT.small.nodeLabelStroke : 0, strokeColor: pal.surface },
+    };
+  });
+}
+
+function kgStyledEdges(edges, isLargeGraph) {
+  const pal = kgCanvasPalette();
+  const origins = kgOriginPalette();
+  return (edges || []).map((e, i) => {
+    const origin = kgGraphOrigin(e);
+    const stroke = origins[origin] || pal.nodeBorder;
+    return {
+      id: `edge_${i}`,
+      from: e.from,
+      to: e.to,
+      origin,
+      label: isLargeGraph ? '' : kgHumanPredicate(e.label),
+      color: { color: stroke, highlight: pal.accent, hover: pal.label, opacity: isLargeGraph ? 0.4 : Math.max(pal.edgeOpacity, 0.9) },
+      width: KG_GRAPH_LAYOUT.small.edgeWidth,
+      font: {
+        size: KG_GRAPH_LAYOUT.small.edgeFont,
+        color: pal.label,
+        strokeWidth: KG_GRAPH_LAYOUT.small.edgeLabelStroke,
+        strokeColor: pal.surface,
+        face: 'ui-monospace, Consolas, monospace',
+      },
+      arrows: { to: { enabled: true, scaleFactor: isLargeGraph ? 0.5 : KG_GRAPH_LAYOUT.small.arrowScale } },
+    };
+  });
+}
+
 // Accessible, non-blocking toast notifications (replacing blocking alert calls)
 function showToast(message, type = 'info', duration = 4000) {
   let container = document.getElementById('toastContainer');
@@ -120,13 +228,22 @@ function showToast(message, type = 'info', duration = 4000) {
   const toast = document.createElement('div');
   toast.className = `toast toast-${type}`;
   toast.textContent = message;
+  // Errors linger longer: they need to be read and acted on.
+  const effectiveDuration = type === 'error' ? Math.max(duration, 7000) : duration;
+  toast.setAttribute('title', 'Click to dismiss');
   container.appendChild(toast);
   announceA11y(message);
 
   setTimeout(() => {
     toast.classList.add('fade-out');
     setTimeout(() => toast.remove(), 300);
-  }, duration);
+  }, effectiveDuration);
+
+  // Dismiss on click: the medium expects transient messages to be dismissable.
+  toast.addEventListener('click', () => {
+    toast.classList.add('fade-out');
+    setTimeout(() => toast.remove(), 300);
+  });
 }
 
 // ==========================================================================
@@ -249,46 +366,18 @@ async function loadActiveGraphData() {
         const nodeCount = data.nodes ? data.nodes.length : 0;
         const isLargeGraph = nodeCount > 250;
 
-        const newNodes = (data.nodes || []).map(n => ({
-          id: n.id,
-          label: isLargeGraph ? n.label : `${n.label}\n(${n.group || 'Entity'})`,
-          color: n.color || '#ff6b00',
-          size: isLargeGraph ? 16 : 24,
-          font: { color: '#fff', size: isLargeGraph ? 10 : 14 }
-        }));
-
-        const newEdges = (data.edges || []).map(e => ({
-          from: e.from,
-          to: e.to,
-          label: isLargeGraph ? '' : e.label,
-          color: { color: '#ff8533', opacity: isLargeGraph ? 0.4 : 0.8 },
-          arrows: { to: { enabled: true, scaleFactor: isLargeGraph ? 0.5 : 0.8 } }
-        }));
+        const newNodes = kgStyledNodes(data.nodes, isLargeGraph);
+        const newEdges = kgStyledEdges(data.edges, isLargeGraph);
 
         window.networkNodes.add(newNodes);
+        // Edges are keyed by index elsewhere (preview/popout); give the
+        // explorer stable ids so theme-change restyling can update in place.
+        newEdges.forEach((e, i) => { e.id = `edge_${i}`; });
         window.networkEdges.add(newEdges);
 
         if (window.networkInstance) {
-          if (isLargeGraph) {
-            window.networkInstance.setOptions({
-              interaction: { hideEdgesOnDrag: true, hideNodesOnDrag: false },
-              physics: {
-                solver: 'barnesHut',
-                barnesHut: { gravitationalConstant: -2000, centralGravity: 0.3, springLength: 95 },
-                stabilization: { enabled: true, iterations: 150, updateInterval: 25 }
-              }
-            });
-          } else {
-            window.networkInstance.setOptions({
-              interaction: { hideEdgesOnDrag: false },
-              physics: {
-                solver: 'forceAtlas2Based',
-                forceAtlas2Based: { gravitationalConstant: -50, centralGravity: 0.01, springLength: 100 },
-                stabilization: { enabled: true, iterations: 100 }
-              }
-            });
-          }
-
+          // One home for canvas physics/layout: canvas_layout.js.
+          KGCanvas.applyLayout(nodeCount);
           window.networkInstance.stabilize();
           window.networkInstance.fit();
 
@@ -303,42 +392,17 @@ async function loadActiveGraphData() {
         }
 
         window.activeGraphNodes = data.nodes || [];
+        window.activeGraphEdges = data.edges || [];
         appState.ui.currentPairIndex = 0;
 
-        // Update Graph Explorer Canvas Stats Badge and Filter Pill Counts
+        // Update Graph Explorer Canvas Stats Badge and rebuild the live filter chips
         const statsEl = document.getElementById('graphStatsText');
         if (statsEl) {
           statsEl.textContent = `${nodeCount} nodes • ${(data.edges || []).length} edges`;
         }
 
-        const countAll = document.getElementById('pillCountAll');
-        if (countAll) countAll.textContent = nodeCount;
-
-        const countDisease = document.getElementById('pillCountDisease');
-        const countGene = document.getElementById('pillCountGene');
-        const countDrug = document.getElementById('pillCountDrug');
-        const countProtein = document.getElementById('pillCountProtein');
-
-        let diseaseCount = 0, geneCount = 0, drugCount = 0, proteinCount = 0;
-        (data.nodes || []).forEach(n => {
-          const grp = (n.group || '').toLowerCase();
-          const id = String(n.id || '').toUpperCase();
-          const lbl = String(n.label || '').toLowerCase();
-          if (grp === 'disease' || id.startsWith('MONDO:') || id.startsWith('DOID:') || lbl.includes('diabetes') || lbl.includes('cancer')) {
-            diseaseCount++;
-          } else if (grp === 'gene' || id.startsWith('HGNC:') || grp === 'genes') {
-            geneCount++;
-          } else if (grp === 'drug' || grp === 'chemical' || grp === 'compound' || id.startsWith('CHEBI:')) {
-            drugCount++;
-          } else if (grp === 'protein' || id.startsWith('UNIPROT:') || id.startsWith('P0') || id.startsWith('P1')) {
-            proteinCount++;
-          }
-        });
-
-        if (countDisease) countDisease.textContent = diseaseCount;
-        if (countGene) countGene.textContent = geneCount;
-        if (countDrug) countDrug.textContent = drugCount;
-        if (countProtein) countProtein.textContent = proteinCount;
+        renderLiveFilterChips(data.nodes || []);
+        populatePathExplorerDatalists(data.nodes || []);
 
         // Update Entity Alignment Candidate datalist and inputs with active graph entities
         const datalist = document.getElementById('activeEntityList');
@@ -365,6 +429,10 @@ async function loadActiveGraphData() {
 
         // Dynamically update Target Disease options from active graph
         populateDetectedDiseases();
+
+        // Explorer empty state: visible only while there is nothing to draw.
+        const explorerEmpty = document.getElementById('explorerEmpty');
+        if (explorerEmpty) explorerEmpty.hidden = nodeCount > 0;
       }
     }
   } catch (err) {
@@ -556,6 +624,37 @@ function initUploadHandler() {
 
   let selectedFile = null;
 
+  // Shared one-click demo: ingests the bundled biomedical sample through the
+  // normal upload flow and lands the user on the Explore tab. Used by the
+  // Active Graph card, the explorer empty state, and nowhere else.
+  window.kgLoadBiomedicalSample = async function kgLoadBiomedicalSample(button) {
+    const btn = button || document.getElementById('loadSampleIntoPreviewBtn');
+    if (!btn || btn.disabled) return;
+    const originalText = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = 'Loading sample…';
+    try {
+      const res = await fetch('/api/sample-data/biomedical_sample_graph');
+      const data = await readJsonOrThrow(res);
+      const ingest = await fetch('/api/ingest/upload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: data.content, file_name: data.file_name, format: data.format }),
+      });
+      const ingestData = await readJsonOrThrow(ingest);
+      if (ingestData.status !== 'success') throw new Error(ingestData.message || 'Ingest failed');
+      showToast('Biomedical sample ingested — explore the graph below.', 'success');
+      if (typeof navigateToTab === 'function') navigateToTab('explorerTab');
+      if (window.KGPreviewRefresh) window.KGPreviewRefresh();
+      await loadActiveGraphData();
+    } catch (err) {
+      showToast(`Sample load failed: ${err.message || err}`, 'error', 7000);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = originalText;
+    }
+  };
+
   function handleFileSelected(file) {
     selectedFile = file;
     const detected = detectFormatFromFileName(file.name);
@@ -575,16 +674,16 @@ function initUploadHandler() {
 
   dropZone.addEventListener('dragover', (e) => {
     e.preventDefault();
-    dropZone.style.borderColor = '#ff6b00';
+    dropZone.classList.add('drag-over');
   });
 
   dropZone.addEventListener('dragleave', () => {
-    dropZone.style.borderColor = '#27272a';
+    dropZone.classList.remove('drag-over');
   });
 
   dropZone.addEventListener('drop', (e) => {
     e.preventDefault();
-    dropZone.style.borderColor = '#27272a';
+    dropZone.classList.remove('drag-over');
     if (e.dataTransfer.files.length > 0) {
       handleFileSelected(e.dataTransfer.files[0]);
     }
@@ -1099,19 +1198,15 @@ async function initGraphExplorer() {
   const options = {
     nodes: {
       shape: 'dot',
-      size: 24,
-      font: { size: 14, face: 'Plus Jakarta Sans' },
+      size: KG_GRAPH_LAYOUT.small.nodeSize,
+      font: { size: KG_GRAPH_LAYOUT.small.nodeFont, face: 'Plus Jakarta Sans' },
       borderWidth: 2,
     },
     edges: {
-      font: { size: 11, align: 'middle', color: '#a1a1aa', background: '#141417', strokeWidth: 0 },
-      arrows: { to: { enabled: true, scaleFactor: 0.8 } },
+      font: (() => { const pal = kgCanvasPalette(); return { size: KG_GRAPH_LAYOUT.small.edgeFont, align: 'middle', color: pal.label, background: pal.surface, strokeWidth: 0 }; })(),
+      arrows: { to: { enabled: true, scaleFactor: KG_GRAPH_LAYOUT.small.arrowScale } },
     },
-    physics: {
-      solver: 'forceAtlas2Based',
-      forceAtlas2Based: { gravitationalConstant: -50, centralGravity: 0.01, springLength: 100 },
-      stabilization: { enabled: true, iterations: 100 }
-    },
+    physics: kgGraphPhysics(0),
   };
 
   window.networkInstance = new vis.Network(container, data, options);
@@ -1289,6 +1384,20 @@ async function initGraphExplorer() {
     window.networkInstance.fit();
   });
 
+  // Theme switch: canvas drawing cannot use CSS variables, so restyle the
+  // datasets in place (ids preserved — no physics restart, no view jump).
+  document.addEventListener('kgnexus-themechange', () => {
+    if (!window.networkInstance || !window.activeGraphNodes) return;
+    const nodeCount = window.activeGraphNodes.length;
+    const isLargeGraph = nodeCount > 250;
+    window.networkNodes.update(kgStyledNodes(window.activeGraphNodes, isLargeGraph));
+    window.networkEdges.update(kgStyledEdges(window.activeGraphEdges || [], isLargeGraph));
+    const pal = kgCanvasPalette();
+    window.networkInstance.setOptions({
+      edges: { font: { color: pal.label, background: pal.surface } },
+    });
+  });
+
   const zoomInBtn = document.getElementById('zoomInGraphBtn');
   if (zoomInBtn) {
     zoomInBtn.addEventListener('click', () => {
@@ -1329,66 +1438,195 @@ async function initGraphExplorer() {
     });
   }
 
-  // Filter Pills Handling
-  const filterPills = document.querySelectorAll('#graphFilterPills .filter-pill');
-  filterPills.forEach(pill => {
-    pill.addEventListener('click', () => {
-      filterPills.forEach(p => {
-        p.classList.remove('active');
-        p.setAttribute('aria-checked', 'false');
-      });
-      pill.classList.add('active');
-      pill.setAttribute('aria-checked', 'true');
+  // ---- Live filter chips (rebuilt from the graph's REAL groups) ----------
+  // No hardcoded categories: whatever groups exist in the active graph
+  // become chips, with live counts.
+  window.renderLiveFilterChips = function renderLiveFilterChips(nodes) {
+    const group = document.getElementById('graphFilterPills');
+    if (!group) return;
 
-      const filterType = pill.getAttribute('data-filter') || 'all';
-      applyGraphFilter(filterType);
+    const counts = new Map();
+    (nodes || []).forEach(n => {
+      const grp = String(n.group || 'Entity').trim() || 'Entity';
+      counts.set(grp, (counts.get(grp) || 0) + 1);
     });
-  });
+    const groups = Array.from(counts.entries()).sort((a, b) => b[1] - a[1]);
 
-  function applyGraphFilter(filterType) {
+    let html = '<span class="filter-label">Filter:</span>';
+    html += `<button type="button" class="filter-pill active" data-filter="all" role="radio" aria-checked="true">All <span class="pill-count">${(nodes || []).length}</span></button>`;
+    groups.forEach(([grp, count]) => {
+      html += `<button type="button" class="filter-pill" data-filter="${escapeHtml(grp.toLowerCase())}" role="radio" aria-checked="false">${escapeHtml(grp)} <span class="pill-count">${count}</span></button>`;
+    });
+    group.innerHTML = html;
+
+    group.querySelectorAll('.filter-pill').forEach(pill => {
+      pill.addEventListener('click', () => {
+        group.querySelectorAll('.filter-pill').forEach(p => {
+          p.classList.remove('active');
+          p.setAttribute('aria-checked', 'false');
+        });
+        pill.classList.add('active');
+        pill.setAttribute('aria-checked', 'true');
+        applyGroupFilter(pill.getAttribute('data-filter') || 'all');
+        clearSemanticSearchHighlight();
+      });
+    });
+  };
+
+  function applyGroupFilter(filterValue) {
     if (!window.networkNodes || !window.networkInstance) return;
     const allNodes = window.networkNodes.get();
     if (allNodes.length === 0) return;
 
-    if (filterType === 'all') {
+    if (filterValue === 'all') {
       window.networkNodes.update(allNodes.map(n => ({ id: n.id, hidden: false, opacity: 1 })));
+      window.networkInstance.fit({ animation: true });
       announceA11y(`Showing all ${allNodes.length} graph entities`);
       return;
     }
 
-    const matches = allNodes.filter(n => {
-      const grp = (n.group || '').toLowerCase();
-      const id = String(n.id || '').toUpperCase();
-      const lbl = String(n.label || '').toLowerCase();
+    const matches = allNodes.filter(n => String(n.group || '').toLowerCase() === filterValue);
+    highlightMatches(matches, `group "${filterValue}"`);
+  }
 
-      if (filterType === 'disease') {
-        return grp === 'disease' || id.startsWith('MONDO:') || id.startsWith('DOID:') || lbl.includes('diabetes') || lbl.includes('cancer');
-      }
-      if (filterType === 'gene') {
-        return grp === 'gene' || id.startsWith('HGNC:') || grp === 'genes';
-      }
-      if (filterType === 'drug') {
-        return grp === 'drug' || grp === 'chemical' || grp === 'compound' || id.startsWith('CHEBI:');
-      }
-      if (filterType === 'protein') {
-        return grp === 'protein' || id.startsWith('UNIPROT:') || id.startsWith('P0') || id.startsWith('P1');
-      }
-      return false;
-    });
-
+  function highlightMatches(matches, what) {
+    const allNodes = window.networkNodes.get();
     const matchIds = new Set(matches.map(m => m.id));
     window.networkNodes.update(allNodes.map(n => ({
       id: n.id,
       opacity: matchIds.has(n.id) ? 1 : 0.15,
-      hidden: false
+      hidden: false,
     })));
 
     if (matches.length > 0) {
       window.networkInstance.fit({ nodes: Array.from(matchIds), animation: true });
-      announceA11y(`Filtered to ${matches.length} ${filterType} entities`);
+      announceA11y(`Showing ${matches.length} of ${allNodes.length} entities for ${what}`);
     } else {
-      showToast(`No entities matching type "${filterType}" in active graph.`, 'info');
+      showToast(`No entities matching ${what} in the active graph.`, 'info');
     }
+  }
+
+  // ---- Semantic search (embeddings, live) ---------------------------------
+  const semanticInput = document.getElementById('semanticSearchInput');
+  const engineBadge = document.getElementById('searchEngineBadge');
+  const clearBtn = document.getElementById('semanticSearchClear');
+  const recommendedRow = document.getElementById('recommendedChips');
+  let searchSeq = 0;
+  let searchTimer = null;
+
+  function clearSemanticSearchHighlight() {
+    if (engineBadge) engineBadge.hidden = true;
+    if (recommendedRow) recommendedRow.innerHTML = '';
+    if (clearBtn) clearBtn.hidden = true;
+    if (window.networkNodes && window.networkInstance && window.networkNodes.length) {
+      window.networkNodes.update(window.networkNodes.get().map(n => ({ id: n.id, opacity: 1, hidden: false })));
+    }
+  }
+  window.clearSemanticSearchHighlight = clearSemanticSearchHighlight;
+
+  function renderRecommended(chips) {
+    if (!recommendedRow) return;
+    if (!chips || !chips.length) {
+      recommendedRow.innerHTML = '';
+      return;
+    }
+    recommendedRow.innerHTML = chips.map(c =>
+      `<button type="button" class="recommended-chip" data-group="${escapeHtml(String(c.label).toLowerCase())}">${escapeHtml(String(c.label))} <span class="pill-count">${c.count}</span></button>`
+    ).join('');
+    recommendedRow.querySelectorAll('.recommended-chip').forEach(chip => {
+      chip.addEventListener('click', () => {
+        applyGroupFilter(chip.getAttribute('data-group'));
+        const group = document.getElementById('graphFilterPills');
+        if (group) {
+          group.querySelectorAll('.filter-pill').forEach(p => {
+            const isActive = p.getAttribute('data-filter') === chip.getAttribute('data-group');
+            p.classList.toggle('active', isActive);
+            p.setAttribute('aria-checked', String(isActive));
+          });
+        }
+      });
+    });
+  }
+
+  async function runSemanticSearch(query) {
+    const seq = ++searchSeq;
+    if (engineBadge) {
+      engineBadge.hidden = false;
+      engineBadge.textContent = 'Searching…';
+      engineBadge.classList.remove('engine-embeddings', 'engine-lexical');
+    }
+    try {
+      const res = await fetch('/api/graph/search', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query }),
+      });
+      const data = await readJsonOrThrow(res);
+      if (seq !== searchSeq) return; // a newer search superseded this one
+      if (data.status !== 'success') throw new Error(data.message || 'Search failed');
+
+      const results = data.results || [];
+      const byId = new Map(results.map(r => [String(r.node.id), r]));
+      const allNodes = window.networkNodes ? window.networkNodes.get() : [];
+      const matchIds = new Set();
+      allNodes.forEach(n => { if (byId.has(String(n.id))) matchIds.add(n.id); });
+      if (window.networkInstance) {
+        window.networkNodes.update(allNodes.map(n => ({
+          id: n.id,
+          opacity: matchIds.size === 0 || matchIds.has(n.id) ? 1 : 0.12,
+          hidden: false,
+        })));
+        if (matchIds.size > 0) {
+          window.networkInstance.fit({ nodes: Array.from(matchIds), animation: true });
+        }
+      }
+
+      if (engineBadge) {
+        const isEmb = data.engine === 'embeddings';
+        engineBadge.textContent = isEmb
+          ? `${data.provider.model_id} · ${(results[0] ? results[0].score : 0).toFixed(2)}`
+          : 'lexical fallback';
+        engineBadge.classList.add(isEmb ? 'engine-embeddings' : 'engine-lexical');
+        engineBadge.title = isEmb
+          ? `Ranked by live embeddings (${data.provider.provider_type}, ${data.provider.dimensions}d)`
+          : 'Embedding provider offline — ranked lexically';
+      }
+      renderRecommended(data.recommended_filters);
+      if (clearBtn) clearBtn.hidden = false;
+      announceA11y(`Search found ${matchIds.size} matching entities via ${data.engine}`);
+    } catch (err) {
+      if (seq !== searchSeq) return;
+      if (engineBadge) {
+        engineBadge.textContent = 'search failed';
+        engineBadge.classList.add('engine-lexical');
+      }
+      showToast(`Semantic search failed: ${err.message || err}`, 'error', 7000);
+    }
+  }
+
+  if (semanticInput) {
+    semanticInput.addEventListener('input', () => {
+      const q = semanticInput.value.trim();
+      clearTimeout(searchTimer);
+      if (!q) {
+        clearSemanticSearchHighlight();
+        return;
+      }
+      searchTimer = setTimeout(() => runSemanticSearch(q), 350);
+    });
+    semanticInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        clearTimeout(searchTimer);
+        const q = semanticInput.value.trim();
+        if (q) runSemanticSearch(q);
+      }
+    });
+  }
+  if (clearBtn) {
+    clearBtn.addEventListener('click', () => {
+      if (semanticInput) semanticInput.value = '';
+      clearSemanticSearchHighlight();
+    });
   }
 
   // Clear / Reset Canvas & Query
@@ -1451,16 +1689,18 @@ async function initGraphExplorer() {
     const nodesData = JSON.stringify(window.networkNodes.get()).replace(/</g, '\\u003c');
     const edgesData = JSON.stringify(window.networkEdges.get()).replace(/</g, '\\u003c');
 
+    const pal = kgCanvasPalette();
+    const popoutIsLight = pal.isLight;
     popout.document.write(`
       <!DOCTYPE html>
       <html>
       <head>
         <title>Full Screen Knowledge Graph Workbench</title>
-        <script type="text/javascript" src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+        <script type="text/javascript" src="/vendor/vis-network.min.js"></script>
         <style>
-          body { margin: 0; padding: 0; background: #09090b; color: #f8fafc; font-family: 'Plus Jakarta Sans', sans-serif; overflow: hidden; }
-          #popoutHeader { position: absolute; top: 12px; left: 16px; z-index: 10; background: rgba(17,17,21,0.85); backdrop-filter: blur(8px); padding: 8px 16px; border-radius: 8px; border: 1px solid #27272f; }
-          #popoutHeader h2 { margin: 0; font-size: 1rem; color: #ff6b00; }
+          body { margin: 0; padding: 0; background: ${popoutIsLight ? '#f6f8fa' : '#09090b'}; color: ${popoutIsLight ? '#1f2328' : '#f8fafc'}; font-family: 'Plus Jakarta Sans', sans-serif; overflow: hidden; }
+          #popoutHeader { position: absolute; top: 12px; left: 16px; z-index: 10; background: ${popoutIsLight ? 'rgba(255,255,255,0.88)' : 'rgba(17,17,21,0.85)'}; backdrop-filter: blur(8px); padding: 8px 16px; border-radius: 8px; border: 1px solid ${popoutIsLight ? '#d0d7de' : '#27272f'}; }
+          #popoutHeader h2 { margin: 0; font-size: 1rem; color: ${pal.accent}; }
           #fullscreenCanvas { width: 100vw; height: 100vh; }
         </style>
       </head>
@@ -1475,14 +1715,19 @@ async function initGraphExplorer() {
           const edges = new vis.DataSet(${edgesData});
           const container = document.getElementById('fullscreenCanvas');
           const isLarge = nodes.length > 250;
+          const pal = ${JSON.stringify(kgCanvasPalette())};
           const options = {
-            nodes: { shape: 'dot', size: isLarge ? 16 : 24, font: { color: '#fff', size: isLarge ? 10 : 14 }, borderWidth: 2 },
-            edges: { font: { size: 11, align: 'middle', color: '#cbd5e1' }, arrows: { to: { enabled: true } }, color: { opacity: isLarge ? 0.4 : 0.8 } },
-            physics: {
-              solver: isLarge ? 'barnesHut' : 'forceAtlas2Based',
-              barnesHut: { gravitationalConstant: -2000, centralGravity: 0.3, springLength: 95 },
-              stabilization: { enabled: true, iterations: 150 }
-            }
+            nodes: {
+              shape: 'dot', size: isLarge ? KG_GRAPH_LAYOUT.large.nodeSize : KG_GRAPH_LAYOUT.small.nodeSize, borderWidth: 2,
+              color: { background: pal.node, border: pal.nodeBorder, highlight: { background: pal.accent, border: pal.accentHover } },
+              font: { color: pal.labelStrong, size: isLarge ? KG_GRAPH_LAYOUT.large.nodeFont : KG_GRAPH_LAYOUT.small.nodeFont, strokeWidth: ${isLightStroke() ? KG_GRAPH_LAYOUT.small.nodeLabelStroke : 0}, strokeColor: pal.surface }
+            },
+            edges: {
+              font: { size: 11, align: 'middle', color: pal.label, background: pal.surface },
+              arrows: { to: { enabled: true } },
+              color: { color: pal.nodeBorder, highlight: pal.accent, opacity: isLarge ? 0.4 : 0.85 }
+            },
+            physics: kgGraphPhysics(isLarge ? 1000 : 0)
           };
           const net = new vis.Network(container, { nodes, edges }, options);
           if (nodes.length > 500) {
@@ -2316,21 +2561,111 @@ function initKeyboardNavigation() {
 // ==========================================================================
 // 7.5 Target Disease Dynamic Detection & Population
 // ==========================================================================
+function populatePathExplorerDatalists(nodes) {
+  const dl = document.getElementById('activeGraphNodesDatalist');
+  if (dl) {
+    dl.innerHTML = (nodes || [])
+      .map(n => `<option value="${escapeHtml(String(n.label || n.id))}">${escapeHtml(String(n.id))}</option>`)
+      .join('');
+  }
+}
+
+function initPathExplorer() {
+  const findBtn = document.getElementById('findPathsBtn');
+  const srcInput = document.getElementById('pathSourceInput');
+  const tgtInput = document.getElementById('pathTargetInput');
+  const algoSelect = document.getElementById('pathAlgorithmSelect');
+  const depthInput = document.getElementById('pathMaxDepthInput');
+  const resultsBox = document.getElementById('pathResults');
+  const summaryEl = document.getElementById('pathResultsSummary');
+  const listEl = document.getElementById('pathResultsList');
+  if (!findBtn || !srcInput || !tgtInput) return;
+
+  function resolveNodeId(value) {
+    // Accept a label ("Metformin") or a raw id ("http://...#MET").
+    const v = String(value || '').trim();
+    if (!v) return '';
+    const nodes = (window.activeGraphNodes || []);
+    const hit = nodes.find(n => String(n.label) === v || String(n.id) === v);
+    return hit ? String(hit.id) : v;
+  }
+
+  function renderPaths(data) {
+    summaryEl.textContent = `${data.algorithm.toUpperCase()} · ${data.path_count} path(s) · ${data.source_label || data.source} → ${data.target_label || data.target}`;
+    if (!data.paths || !data.paths.length) {
+      listEl.innerHTML = '<p class="path-empty">No path found within the depth limit. Try increasing depth or different endpoints.</p>';
+      return;
+    }
+    listEl.innerHTML = data.paths.map((p, idx) => {
+      const chain = p.hops.map(h =>
+        `<span class="path-node mono">${escapeHtml(h.from_label)}</span>` +
+        `<span class="path-rel">—${escapeHtml(kgHumanPredicate(h.predicate) || 'relates_to')}→</span>`
+      ).join('') + `<span class="path-node mono">${escapeHtml(p.hops[p.hops.length - 1].to_label)}</span>`;
+      return `<div class="path-card"><span class="path-length">${p.length} hop${p.length === 1 ? '' : 's'}</span><div class="path-chain">${chain}</div></div>`;
+    }).join('');
+    listEl.querySelectorAll('.path-card').forEach((card, i) => {
+      card.addEventListener('click', () => {
+        // Highlight this path's nodes on the explorer canvas.
+        const path = data.paths[i];
+        const ids = [path.hops[0].from, ...path.hops.map(h => h.to)];
+        if (window.networkNodes && window.networkInstance) {
+          const all = window.networkNodes.get();
+          window.networkNodes.update(all.map(n => ({
+            id: n.id,
+            opacity: ids.includes(String(n.id)) ? 1 : 0.12,
+            hidden: false,
+          })));
+          window.networkInstance.fit({ nodes: ids, animation: true });
+        }
+      });
+    });
+  }
+
+  findBtn.addEventListener('click', async () => {
+    const source = resolveNodeId(srcInput.value);
+    const target = resolveNodeId(tgtInput.value);
+    if (!source || !target) {
+      showToast('Enter both a source and a target entity.', 'info');
+      return;
+    }
+    if (source === target) {
+      showToast('Source and target are the same entity.', 'info');
+      return;
+    }
+    const algorithm = algoSelect ? algoSelect.value : 'bfs';
+    const maxDepth = depthInput ? parseInt(depthInput.value, 10) || 4 : 4;
+    findBtn.disabled = true;
+    const orig = findBtn.textContent;
+    findBtn.textContent = 'Traversing…';
+    resultsBox.hidden = false;
+    summaryEl.textContent = 'Traversing the live graph…';
+    try {
+      const res = await fetch('/api/graph/paths', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ source, target, algorithm, max_depth: maxDepth }),
+      });
+      const data = await readJsonOrThrow(res);
+      if (data.status !== 'success') throw new Error(data.message || 'Path search failed');
+      renderPaths(data);
+      announceA11y(`Found ${data.path_count} paths from ${source} to ${target}`);
+    } catch (err) {
+      summaryEl.textContent = '';
+      listEl.innerHTML = `<p class="path-empty">Path search failed: ${escapeHtml(String(err.message || err))}</p>`;
+    } finally {
+      findBtn.disabled = false;
+      findBtn.textContent = orig;
+    }
+  });
+}
+
 async function populateDetectedDiseases(manual = false) {
+  // Live suggestions only: diseases come from the active graph/API at
+  // request time. No hardcoded preset list.
   const datalist = document.getElementById('targetDiseaseDatalist');
   const badge = document.getElementById('detectedDiseasesCountBadge');
   const diseaseInput = document.getElementById('targetDiseaseInput');
   if (!datalist) return;
-
-  const standardPresets = [
-    { id: "MONDO:0005148", label: "Type 2 Diabetes Mellitus" },
-    { id: "MONDO:0005267", label: "EGFR Malignancy / Lung Neoplasm" },
-    { id: "MONDO:0004975", label: "Alzheimer Disease" },
-    { id: "MONDO:0007254", label: "Breast Cancer" },
-    { id: "MONDO:0005180", label: "Parkinson Disease" },
-    { id: "MONDO:0005010", label: "Cardiomyopathy" },
-    { id: "DOID:162", label: "Cancer" }
-  ];
 
   let detectedList = [];
   try {
@@ -2342,7 +2677,6 @@ async function populateDetectedDiseases(manual = false) {
       }
     }
   } catch (e) {
-    // Fallback to client-side graph inspection if API unreachable
     const activeNodes = appState.graphs.active?.nodes || [];
     const activeEdges = appState.graphs.active?.edges || [];
     const edgeTargets = new Set();
@@ -2370,51 +2704,32 @@ async function populateDetectedDiseases(manual = false) {
     map.set(d.id, { id: d.id, label: d.label, inGraph: true });
   });
 
-  standardPresets.forEach(p => {
-    if (!map.has(p.id)) {
-      map.set(p.id, { id: p.id, label: p.label, inGraph: false });
-    }
-  });
-
   const combined = Array.from(map.values());
   const detectedCount = detectedList.length;
 
-  // Render options in datalist
   datalist.innerHTML = '';
   combined.forEach(item => {
     const opt = document.createElement('option');
     opt.value = item.id;
-    opt.textContent = `${item.inGraph ? '⭐ [In Graph] ' : ''}${item.label} (${item.id})`;
+    opt.textContent = `${item.label} (${item.id})`;
     datalist.appendChild(opt);
   });
 
-  // Update badge
   if (badge) {
-    if (detectedCount > 0) {
-      badge.textContent = `${detectedCount} IN GRAPH`;
-      badge.style.background = 'rgba(34, 197, 94, 0.2)';
-      badge.style.color = '#22c55e';
-      badge.style.borderColor = 'rgba(34, 197, 94, 0.4)';
-    } else {
-      badge.textContent = `${standardPresets.length} PRESETS`;
-      badge.style.background = 'rgba(255, 107, 0, 0.15)';
-      badge.style.color = 'var(--primary-orange)';
-      badge.style.borderColor = 'rgba(255, 107, 0, 0.3)';
-    }
+    badge.hidden = detectedCount === 0;
+    badge.textContent = `${detectedCount} IN GRAPH`;
   }
 
-  // If input is empty or matches a default, pick the first in-graph disease
-  if (diseaseInput && detectedList.length > 0) {
-    if (!diseaseInput.value || diseaseInput.value === 'MONDO:0005148') {
-      diseaseInput.value = detectedList[0].id;
-    }
+  // If input is empty, suggest the first in-graph disease.
+  if (diseaseInput && detectedList.length > 0 && !diseaseInput.value) {
+    diseaseInput.value = detectedList[0].id;
   }
 
   if (manual) {
     showToast(
       detectedCount > 0
-        ? `Detected ${detectedCount} disease target(s) from graph.`
-        : `No disease targets found in current graph. Showing standard presets.`,
+        ? `Detected ${detectedCount} disease target(s) from the active graph.`
+        : `No disease targets found in the current graph yet.`,
       detectedCount > 0 ? "success" : "info"
     );
   }
@@ -2430,13 +2745,11 @@ function initPipelineManager() {
   const backupBtn = document.getElementById('createBackupBtn');
   const manifestJson = document.getElementById('manifestJson');
   const stepBadges = document.querySelectorAll('.step-badge');
-  const rescanDiseasesBtn = document.getElementById('rescanDiseasesBtn');
 
-  // Initial disease population
+  // Live datalists (path explorer endpoints + disease suggestions) and the
+  // BFS/DFS path explorer. Everything reads the active graph at request time.
   populateDetectedDiseases();
-  if (rescanDiseasesBtn) {
-    rescanDiseasesBtn.addEventListener('click', () => populateDetectedDiseases(true));
-  }
+  initPathExplorer();
 
   async function runPipelineTask(taskFn) {
     if (appState.operations.pipelineInProgress) return;
@@ -2453,8 +2766,75 @@ function initPipelineManager() {
 
   e2eBtn.addEventListener('click', () => runPipelineTask(async () => {
     resetSteps();
-    manifestJson.textContent = "Executing 13-stage release lifecycle...";
+    manifestJson.textContent = "Executing 13-stage release lifecycle…";
     const domainPack = document.getElementById('pipelineDomainPackSelect')?.value || 'biomedical';
+    const runId = `run_ui_${Date.now()}`;
+
+    // Mission Control: watch stage events live via SSE while the run executes.
+    // The SSE GET itself triggers the run (auth-gated like any mutation), so
+    // EventSource is unusable here — it cannot send the Authorization header;
+    // KGSseStream (auth_client.js) reads the same stream over fetch.
+    if (typeof window.KGSseStream === 'function') {
+      await new Promise((resolve) => {
+        let completed = false;
+        const onStage = (rawData) => {
+          try {
+            const data = JSON.parse(rawData);
+            const badge = document.querySelector(`.step-badge[data-stage="${data.stage}"]`);
+            if (badge) {
+              badge.classList.remove('pass', 'failed', 'running');
+              badge.classList.add(data.status === 'PASS' ? 'pass' : (data.status === 'FAIL' ? 'failed' : 'running'));
+            }
+            if (data.status === 'FAIL') {
+              manifestJson.textContent = `Stage ${data.stage} FAILED — release quarantined. Full evidence in the run result below.`;
+            }
+          } catch (e) { /* malformed event: skip */ }
+        };
+        const onComplete = (rawData) => {
+          completed = true;
+          try {
+            const data = JSON.parse(rawData);
+            if (data.type === 'error') {
+              manifestJson.textContent = `Pipeline error: ${data.message}`;
+            } else if (data.result) {
+              manifestJson.textContent = JSON.stringify(data.result, null, 2);
+              const statuses = data.result.stage_statuses || {};
+              stepBadges.forEach((badge) => {
+                const stageKey = badge.dataset.stage;
+                badge.classList.toggle('pass', statuses[stageKey] === 'PASS');
+                badge.classList.toggle('failed', statuses[stageKey] === 'FAIL');
+              });
+              loadActiveGraphData();
+              populateDetectedDiseases();
+              announceA11y('13-stage E2E pipeline execution completed successfully.');
+            }
+          } catch (e) { /* fall through */ }
+          resolve();
+        };
+        window.KGSseStream(
+          `/api/pipeline/events/${encodeURIComponent(runId)}?domain_pack=${encodeURIComponent(domainPack)}`,
+          {
+            onEvent: (name, data) => {
+              if (name === 'stage') onStage(data);
+              else if (name === 'complete') onComplete(data);
+            },
+            onError: () => {
+              if (!completed) {
+                manifestJson.textContent = 'Live stream lost — run again for the JSON result.';
+              }
+              resolve();
+            },
+            onEnd: () => {
+              if (!completed) {
+                manifestJson.textContent = 'Live stream closed early — run again for the JSON result.';
+              }
+              resolve();
+            },
+          },
+        );
+      });
+      return;
+    }
 
     try {
       const res = await fetch('/api/pipeline/execute', {
@@ -2463,7 +2843,7 @@ function initPipelineManager() {
         body: JSON.stringify({
           pipeline_type: 'e2e_release',
           domain_pack: domainPack,
-          run_id: `run_ui_${Date.now()}`
+          run_id: runId
         }),
       });
       const data = await readJsonOrThrow(res);
@@ -2487,7 +2867,7 @@ function initPipelineManager() {
     } catch (err) {
       manifestJson.textContent = `Pipeline error: ${err.message}`;
     }
-  }));
+  }))
 
   drugBtn.addEventListener('click', () => runPipelineTask(async () => {
     resetSteps();

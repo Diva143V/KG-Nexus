@@ -376,3 +376,25 @@ class DurableAssertionStore:
                     (limit,),
                 ).fetchall()
             return [self._row_to_assertion(r) for r in rows]
+
+    def get_assertions_by_entity(
+        self, entity: Identifier | str, limit: int = 100
+    ) -> list[Assertion | AttributeAssertion]:
+        """All assertions where the entity is the subject or the object.
+
+        Matches both canonical (``ns:value``) and bare-value forms so UI
+        graph node ids resolve regardless of how they were ingested.
+        """
+        canonical = entity.canonical if isinstance(entity, Identifier) else str(entity)
+        bare = canonical.split(":", 1)[1] if ":" in canonical else canonical
+        with self._lock, self._session() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM assertions
+                WHERE subject_id IN (?, ?) OR object_id IN (?, ?)
+                ORDER BY rowid
+                LIMIT ?
+                """,
+                (canonical, bare, canonical, bare, limit),
+            ).fetchall()
+            return [self._row_to_assertion(r) for r in rows]

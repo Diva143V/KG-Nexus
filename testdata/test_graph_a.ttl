@@ -1,0 +1,86 @@
+# ==============================================================================
+# Graph A: Biomedical Knowledge Graph (RDF Turtle Format)
+# Benchmark & Fusion Evaluation Dataset for Target-Disease-Drug Repurposing
+# ==============================================================================
+
+@prefix bio: <http://example.org/biomedical/> .
+@prefix hgnc: <http://identifiers.org/hgnc/> .
+@prefix uniprot: <http://identifiers.org/uniprot/> .
+@prefix mondo: <http://identifiers.org/mondo/> .
+@prefix chembl: <http://identifiers.org/chembl/> .
+@prefix doi: <urn:doi:> .
+@prefix pmid: <urn:pmid:> .
+
+# ------------------------------------------------------------------------------
+# 1. Gene Entities & Encodings
+# ------------------------------------------------------------------------------
+
+# EGFR Gene (HGNC:3236) -> encodes UniProt P00533, associated with NSCLC
+hgnc:3236 a bio:Gene ;
+    bio:symbol "EGFR" ;
+    bio:gene_symbol "EGFR" ;
+    bio:label "EGFR" ;
+    bio:encodes uniprot:P00533 ;
+    bio:associated_with mondo:0005267 .
+
+# BRAF Gene (HGNC:1097) -> encodes UniProt P15056, associated with Melanoma
+hgnc:1097 a bio:Gene ;
+    bio:symbol "BRAF" ;
+    bio:gene_symbol "BRAF" ;
+    bio:label "BRAF" ;
+    bio:encodes uniprot:P15056 ;
+    bio:associated_with mondo:0005105 .
+
+# ------------------------------------------------------------------------------
+# 2. Drug Entities, Targets, and Therapeutic Indications
+# ------------------------------------------------------------------------------
+
+# Osimertinib (CHEMBL3353410) -> targets EGFR (P00533), treats NSCLC (MONDO:0005267)
+chembl:CHEMBL3353410 a bio:Drug ;
+    bio:drug_name "Osimertinib" ;
+    bio:targets uniprot:P00533 ;
+    bio:treats mondo:0005267 ;
+    bio:has_source <urn:doi:10.1038/nature12345> .
+
+# Vemurafenib (CHEMBL1229517) -> targets BRAF (P15056), treats Melanoma (MONDO:0005105)
+# Also asserted to treat NSCLC (MONDO:0005267) to test opposing predicate conflict detection
+chembl:CHEMBL1229517 a bio:Drug ;
+    bio:drug_name "Vemurafenib" ;
+    bio:targets uniprot:P15056 ;
+    bio:treats mondo:0005105 ;
+    bio:treats mondo:0005267 ;
+    bio:has_source pmid:24123456 .
+
+# ------------------------------------------------------------------------------
+# 3. Protein Target Entities
+# ------------------------------------------------------------------------------
+
+uniprot:P00533 a bio:Protein ;
+    bio:name "EGFR" ;
+    bio:fullName "Epidermal Growth Factor Receptor" .
+
+uniprot:P15056 a bio:Protein ;
+    bio:name "BRAF" ;
+    bio:fullName "Serine/threonine-protein kinase B-raf" .
+
+# ------------------------------------------------------------------------------
+# 4. Disease Entities
+# ------------------------------------------------------------------------------
+
+mondo:0005267 a bio:Disease ;
+    bio:name "Non-Small Cell Lung Carcinoma" ;
+    bio:disease_name "Non-Small Cell Lung Carcinoma" .
+
+mondo:0005105 a bio:Disease ;
+    bio:name "Melanoma" ;
+    bio:disease_name "Melanoma" .
+
+# ------------------------------------------------------------------------------
+# 5. Provenance Publications & Lineage Anchors
+# ------------------------------------------------------------------------------
+
+<urn:doi:10.1038/nature12345> a bio:Publication ;
+    bio:title "Discovery and Mechanism of Osimertinib in NSCLC" .
+
+pmid:24123456 a bio:Publication ;
+    bio:title "Clinical Efficacy of Vemurafenib in BRAF-mutant Melanoma" .

@@ -348,6 +348,25 @@ class GenericFusionEngine:
         # Build visualization graph nodes and edges using domain config presentation styling
         entity_nodes_map: dict[str, dict[str, Any]] = dict(canonical_result.canonical_entities)
 
+        def _origin_of(a: Any) -> str | None:
+            """Graph of provenance for one reconciled assertion (A/B/merged)."""
+            origin = getattr(getattr(a, "provenance", None), "graph_origin_id", None)
+            return str(origin) if origin else None
+
+        def _merge_origin(node: dict[str, Any], origin: str | None) -> None:
+            """Union origin labels: same -> keep, different -> 'a+b' style merge."""
+            if not origin:
+                return
+            existing = node.get("graph_origin_id")
+            if not existing:
+                node["graph_origin_id"] = origin
+            elif existing != origin and origin not in str(existing).split("+"):
+                node["graph_origin_id"] = f"{existing}+{origin}"
+
+        # Canonical entities built in Stage 5 inherit origins from the
+        # reconciled assertions that touch them (handled in the loops above
+        # via _merge_origin; untouched canonical seeds render as shared).
+
         def _resolve_entity_styling(eid: str, ns_str: str, is_subj: bool) -> tuple[str, str]:
             group_name = str(ns_str).capitalize() if ns_str else "Entity"
             color = config.default_node_color if is_subj else config.default_target_node_color
@@ -382,10 +401,12 @@ class GenericFusionEngine:
                     "color": col_s,
                     "aliases": [s_val],
                     "provenance_sources": [a_id_str],
+                    "graph_origin_id": _origin_of(a),
                 }
             else:
                 if a_id_str not in entity_nodes_map[s_val]["provenance_sources"]:
                     entity_nodes_map[s_val]["provenance_sources"].append(a_id_str)
+                _merge_origin(entity_nodes_map[s_val], _origin_of(a))
 
             if is_lit:
                 # Record literal attribute on entity properties without creating entity node
@@ -411,10 +432,12 @@ class GenericFusionEngine:
                         "color": col_o,
                         "aliases": [o_val],
                         "provenance_sources": [a_id_str],
+                        "graph_origin_id": _origin_of(a),
                     }
                 else:
                     if a_id_str not in entity_nodes_map[o_val]["provenance_sources"]:
                         entity_nodes_map[o_val]["provenance_sources"].append(a_id_str)
+                    _merge_origin(entity_nodes_map[o_val], _origin_of(a))
 
         nodes = list(entity_nodes_map.values())
         edges: list[dict[str, Any]] = []
@@ -428,6 +451,7 @@ class GenericFusionEngine:
                         "to": str(a.object.value),
                         "label": str(a.predicate),
                         "assertion_id": str(a.id.canonical),
+                        "graph_origin_id": _origin_of(a),
                     }
                 )
 

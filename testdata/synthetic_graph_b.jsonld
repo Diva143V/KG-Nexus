@@ -1,0 +1,60 @@
+{
+  "@context": {
+    "corp": "http://example.org/corp/",
+    "emp": "http://example.org/employee/",
+    "org": "http://example.org/org/",
+    "loc": "http://example.org/geo/"
+  },
+  "@graph": [
+    {
+      "@id": "http://example.org/org/ACME_CORP",
+      "@type": "corp:Company",
+      "name": "Acme Inc",
+      "duns": "123456789"
+    },
+    {
+      "@id": "http://example.org/employee/E101",
+      "@type": "corp:Person",
+      "name": "Alice Smith",
+      "email": "alice.smith@acme.com"
+    },
+    {
+      "@id": "http://example.org/employee/E102",
+      "@type": "corp:Person",
+      "name": "Bob Jones",
+      "email": "bob.jones@acme.com"
+    },
+    {
+      "@id": "http://example.org/employee/E103",
+      "@type": "corp:Person",
+      "name": "Charlie Brown",
+      "email": "charlie.brown@acme.com"
+    },
+    {
+      "@id": "http://example.org/geo/CALIFORNIA",
+      "@type": "corp:Person",
+      "name": "California",
+      "comment": "Hard negative triggering disjoint class veto between Person and Location"
+    },
+    {
+      "from": "http://example.org/org/ACME_CORP",
+      "predicate": "locatedIn",
+      "to": "http://example.org/geo/CALIFORNIA"
+    },
+    {
+      "from": "http://example.org/employee/E101",
+      "predicate": "employedBy",
+      "to": "http://example.org/org/ACME_CORP"
+    },
+    {
+      "from": "http://example.org/employee/E102",
+      "predicate": "terminatedBy",
+      "to": "http://example.org/org/ACME_CORP"
+    },
+    {
+      "from": "http://example.org/employee/E103",
+      "predicate": "employedBy",
+      "to": "http://example.org/org/ACME_CORP"
+    }
+  ]
+}

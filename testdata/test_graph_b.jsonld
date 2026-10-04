@@ -1,0 +1,166 @@
+{
+  "@context": {
+    "bio": "http://example.org/biomedical/",
+    "chembl": "http://identifiers.org/chembl/",
+    "uniprot": "http://identifiers.org/uniprot/",
+    "mondo": "http://identifiers.org/mondo/",
+    "hgnc": "http://identifiers.org/hgnc/",
+    "modulates": {
+      "@id": "bio:modulates",
+      "@type": "@id"
+    },
+    "producesProtein": {
+      "@id": "bio:producesProtein",
+      "@type": "@id"
+    },
+    "indicated_for": {
+      "@id": "bio:indicated_for",
+      "@type": "@id"
+    },
+    "contraindicates": {
+      "@id": "bio:contraindicates",
+      "@type": "@id"
+    },
+    "chemical_name": "bio:chemical_name",
+    "drug_name": "bio:drug_name",
+    "fullName": "bio:fullName",
+    "molecularWeight": "bio:molecularWeight",
+    "disease_name": "bio:disease_name",
+    "symbol": "bio:symbol",
+    "name": "bio:name",
+    "edges": "bio:edges"
+  },
+  "@graph": [
+    {
+      "@id": "http://identifiers.org/hgnc/3236",
+      "@type": "bio:Gene",
+      "name": "EGFR",
+      "symbol": "EGFR",
+      "producesProtein": "http://identifiers.org/uniprot/P00533"
+    },
+    {
+      "@id": "http://identifiers.org/uniprot/P00533",
+      "@type": "bio:Protein",
+      "name": "EGFR",
+      "fullName": "Epidermal Growth Factor Receptor"
+    },
+    {
+      "@id": "http://identifiers.org/chembl/CHEMBL3353410",
+      "@type": "bio:Drug",
+      "drug_name": "Osimertinib",
+      "molecularWeight": "499.6",
+      "modulates": "http://identifiers.org/uniprot/P00533",
+      "indicated_for": "http://identifiers.org/mondo/0005267"
+    },
+    {
+      "@id": "http://identifiers.org/chembl/CHEMBL1229517",
+      "@type": "bio:Drug",
+      "drug_name": "Vemurafenib",
+      "contraindicates": "http://identifiers.org/mondo/0005267"
+    },
+    {
+      "@id": "http://identifiers.org/chembl/CHEMBL25",
+      "@type": "bio:Drug",
+      "drug_name": "Aspirin",
+      "chemical_name": "2-Acetoxybenzoic acid",
+      "modulates": "http://identifiers.org/uniprot/P00533",
+      "indicated_for": "http://identifiers.org/mondo/0005010"
+    },
+    {
+      "@id": "http://identifiers.org/mondo/0005267",
+      "@type": "bio:Disease",
+      "name": "Non-Small Cell Lung Carcinoma",
+      "disease_name": "Non-Small Cell Lung Carcinoma"
+    },
+    {
+      "@id": "http://identifiers.org/mondo/0005010",
+      "@type": "bio:Disease",
+      "name": "Cardiovascular Disease",
+      "disease_name": "Cardiovascular Disease"
+    },
+    {
+      "@id": "http://identifiers.org/mondo/0020000",
+      "@type": "bio:Disease",
+      "name": "EGFR",
+      "symbol": "EGFR",
+      "disease_name": "EGFR Overexpression Syndrome"
+    }
+  ],
+  "edges": [
+    {
+      "from": "http://identifiers.org/hgnc/3236",
+      "predicate": "producesProtein",
+      "to": "http://identifiers.org/uniprot/P00533"
+    },
+    {
+      "from": "http://identifiers.org/uniprot/P00533",
+      "predicate": "fullName",
+      "to": "Epidermal Growth Factor Receptor"
+    },
+    {
+      "from": "http://identifiers.org/chembl/CHEMBL3353410",
+      "predicate": "drug_name",
+      "to": "Osimertinib"
+    },
+    {
+      "from": "http://identifiers.org/chembl/CHEMBL3353410",
+      "predicate": "molecularWeight",
+      "to": "499.6"
+    },
+    {
+      "from": "http://identifiers.org/chembl/CHEMBL3353410",
+      "predicate": "modulates",
+      "to": "http://identifiers.org/uniprot/P00533"
+    },
+    {
+      "from": "http://identifiers.org/chembl/CHEMBL3353410",
+      "predicate": "indicated_for",
+      "to": "http://identifiers.org/mondo/0005267"
+    },
+    {
+      "from": "http://identifiers.org/chembl/CHEMBL1229517",
+      "predicate": "drug_name",
+      "to": "Vemurafenib"
+    },
+    {
+      "from": "http://identifiers.org/chembl/CHEMBL1229517",
+      "predicate": "contraindicates",
+      "to": "http://identifiers.org/mondo/0005267"
+    },
+    {
+      "from": "http://identifiers.org/chembl/CHEMBL25",
+      "predicate": "drug_name",
+      "to": "Aspirin"
+    },
+    {
+      "from": "http://identifiers.org/chembl/CHEMBL25",
+      "predicate": "chemical_name",
+      "to": "2-Acetoxybenzoic acid"
+    },
+    {
+      "from": "http://identifiers.org/chembl/CHEMBL25",
+      "predicate": "modulates",
+      "to": "http://identifiers.org/uniprot/P00533"
+    },
+    {
+      "from": "http://identifiers.org/chembl/CHEMBL25",
+      "predicate": "indicated_for",
+      "to": "http://identifiers.org/mondo/0005010"
+    },
+    {
+      "from": "http://identifiers.org/mondo/0020000",
+      "predicate": "name",
+      "to": "EGFR"
+    },
+    {
+      "from": "http://identifiers.org/mondo/0020000",
+      "predicate": "symbol",
+      "to": "EGFR"
+    },
+    {
+      "from": "http://identifiers.org/mondo/0020000",
+      "predicate": "type",
+      "to": "Disease"
+    }
+  ]
+}

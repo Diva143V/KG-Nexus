@@ -1,0 +1,41 @@
+# ==============================================================================
+# Synthetic Knowledge Graph A: Enterprise HR & Corporate Directory (RDF Turtle)
+# Domain: synthetic / enterprise
+# ==============================================================================
+
+@prefix corp: <http://example.org/corp/> .
+@prefix emp: <http://example.org/employee/> .
+@prefix org: <http://example.org/org/> .
+@prefix loc: <http://example.org/geo/> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+
+# 1. Company: Acme Corporation
+org:ACME_CORP a corp:Company ;
+    corp:name "Acme Corporation" ;
+    corp:duns "123456789" ;
+    corp:foundedDate "2010-05-15" ;
+    corp:headquarters loc:SAN_FRANCISCO ;
+    corp:operatesIn loc:CALIFORNIA .
+
+# 2. Employees in Acme
+emp:E101 a corp:Employee ;
+    corp:name "Alice Smith" ;
+    corp:fullName "Alice Marie Smith" ;
+    corp:email "alice.smith@acme.com" ;
+    corp:employee_id "EMP-101" ;
+    corp:worksAt org:ACME_CORP .
+
+emp:E102 a corp:Employee ;
+    corp:name "Bob Jones" ;
+    corp:email "bob.jones@acme.com" ;
+    corp:employee_id "EMP-102" ;
+    corp:employedBy org:ACME_CORP .
+
+# 3. Locations
+loc:SAN_FRANCISCO a corp:Location ;
+    corp:name "San Francisco" ;
+    corp:postal_code "94105" .
+
+loc:CALIFORNIA a corp:Location ;
+    corp:name "California" ;
+    corp:geo_id "US-CA" .

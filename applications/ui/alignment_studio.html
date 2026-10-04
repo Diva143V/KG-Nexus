@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Expert Entity Alignment Studio - Interactive dual-graph visualizer, live merge simulator, and human-in-the-loop verification cockpit.">
+  <meta name="theme-color" content="#f6f8fa">
+  <title>Entity Alignment Studio &bull; Hybrid KG</title>
+  <!-- Same-origin assets only: no CDN scripts, no third-party font fetches. -->
+  <link rel="stylesheet" href="alignment_studio.css">
+  <script type="text/javascript" src="/vendor/vis-network.min.js"></script>
+</head>
+<body class="studio-body">
+  <!-- Top Navigation & Header Bar -->
+  <header class="studio-header" role="banner">
+    <div class="header-left">
+      <a href="index.html" class="btn-back" title="Return to Main Knowledge Graph Dashboard">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="19" y1="12" x2="5" y2="12"></line>
+          <polyline points="12 19 5 12 12 5"></polyline>
+        </svg>
+        <span>Dashboard</span>
+      </a>
+      <div class="header-divider" aria-hidden="true"></div>
+      <button type="button" class="btn-drawer-toggle active" id="btnToggleQueue" title="Toggle Candidate Queue Panel" aria-expanded="true">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+          <line x1="9" y1="3" x2="9" y2="21"></line>
+        </svg>
+        <span>Queue</span>
+        <span class="queue-pill-badge" id="queueCountBadge">0</span>
+      </button>
+      <h1 class="brand-title">Entity Alignment Studio</h1>
+    </div>
+
+    <div class="header-center">
+      <div class="view-mode-pills" role="radiogroup" aria-label="Visualizer Mode">
+        <button type="button" class="mode-pill active" id="btnModeDual" role="radio" aria-checked="true">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="2" y="3" width="9" height="18" rx="2"></rect>
+            <line x1="12" y1="3" x2="12" y2="21"></line>
+            <rect x="13" y="3" width="9" height="18" rx="2"></rect>
+          </svg>
+          <span>Dual Split</span>
+        </button>
+        <button type="button" class="mode-pill" id="btnModeMerge" role="radio" aria-checked="false" title="Simulate unified canonical entity before committing">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="18" cy="18" r="3"></circle>
+            <circle cx="6" cy="6" r="3"></circle>
+            <path d="M13 6h3a2 2 0 0 1 2 2v7"></path>
+            <line x1="6" y1="9" x2="6" y2="21"></line>
+          </svg>
+          <span>Preview Merge</span>
+        </button>
+      </div>
+
+      <span class="disjoint-warning" id="disjointWarningBadge">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+          <line x1="12" y1="9" x2="12" y2="13"></line>
+          <line x1="12" y1="17" x2="12.01" y2="17"></line>
+        </svg>
+        <span id="disjointWarningText">Disjoint Classes</span>
+      </span>
+    </div>
+
+    <div class="header-right">
+      <button type="button" class="btn-canvas-tool" id="btnFitViews" title="Fit both graphs into viewport">Fit</button>
+      <button type="button" class="btn-canvas-tool" id="btnTogglePhysics" title="Toggle physics simulation">Pause Physics</button>
+      <button type="button" class="btn-canvas-tool" id="btnCrossHighlight" title="Highlight shared neighbor nodes across both canvases">Pulse Shared</button>
+      <div class="header-divider" aria-hidden="true"></div>
+      <button type="button" class="btn-drawer-toggle" id="btnToggleInspector" title="Toggle Details & Signals Inspector" aria-expanded="false">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+          <line x1="15" y1="3" x2="15" y2="21"></line>
+        </svg>
+        <span>Inspector</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- Main Studio Layout -->
+  <main class="studio-main" id="mainContent">
+    <!-- Left Drawer: Candidate Queue -->
+    <aside class="sidebar-queue" id="sidebarQueue" aria-label="Candidate Queue Drawer">
+      <div class="drawer-header">
+        <div class="drawer-title-row">
+          <div class="drawer-title-wrap">
+            <h2>Candidate Queue</h2>
+            <span class="queue-counter" id="queueCounterBadge">5 pairs</span>
+          </div>
+          <button type="button" class="btn-drawer-close" id="btnCloseQueue" title="Close Queue Panel">&times;</button>
+        </div>
+        
+        <div class="queue-search-box">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="11" cy="11" r="8"></circle>
+            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+          </svg>
+          <input type="text" id="queueSearchInput" class="queue-search-input" placeholder="Filter candidates…" aria-label="Search candidate queue">
+        </div>
+
+        <div class="queue-filter-tabs" role="tablist">
+          <button type="button" class="filter-tab active" data-filter="all">All</button>
+          <button type="button" class="filter-tab" data-filter="borderline">Borderline</button>
+          <button type="button" class="filter-tab" data-filter="review">Review</button>
+          <button type="button" class="filter-tab" data-filter="decided">Decided</button>
+        </div>
+      </div>
+
+      <!-- Scrollable Candidate Cards List -->
+      <div class="queue-list" id="candidateQueueList" role="listbox" aria-label="Candidates list">
+        <div class="queue-loading">
+          <span class="spinner"></span>
+          <span>Loading candidates…</span>
+        </div>
+      </div>
+
+      <!-- Queue Footer Controls -->
+      <div class="queue-footer">
+        <label class="toggle-control" title="Automatically load next candidate after recording a decision">
+          <input type="checkbox" id="autoAdvanceToggle" checked>
+          <span class="toggle-slider"></span>
+          <span class="toggle-label">Auto-Advance</span>
+        </label>
+        <button type="button" id="refreshQueueBtn" class="btn-refresh" title="Reload queue from active graph store">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"></path>
+          </svg>
+          <span>Refresh</span>
+        </button>
+      </div>
+    </aside>
+
+    <!-- Center Canvas Stage: Full-Bleed Dual-Graph Explorer & Merge Simulator -->
+    <section class="canvas-stage" id="canvasStage" aria-label="Graph Visualization Stage">
+      <!-- Split Dual Viewport Container -->
+      <div class="dual-viewports-container" id="dualCanvasContainer">
+        <!-- Canvas A (Source Entity Neighborhood) -->
+        <div class="viewport-pane viewport-a" id="viewportA">
+          <div class="canvas-floating-chip chip-left">
+            <span class="source-tag">GRAPH A</span>
+            <span class="floating-entity-title" id="paneATitle">Source Entity</span>
+            <span class="floating-metrics" id="paneANodesCount">0 nodes</span>
+          </div>
+          <div class="network-viewport" id="networkCanvasA"></div>
+        </div>
+
+        <!-- Center Minimal Divider with Bridge Score -->
+        <div class="center-bridge-column" id="centerBridge">
+          <div class="bridge-line"></div>
+          <div class="bridge-badge" id="bridgeScoreBadge" title="Vector similarity score">
+            <span class="bridge-score" id="bridgeScoreVal">0.88</span>
+          </div>
+          <div class="bridge-line"></div>
+        </div>
+
+        <!-- Canvas B (Target Candidate Neighborhood) -->
+        <div class="viewport-pane viewport-b" id="viewportB">
+          <div class="canvas-floating-chip chip-right">
+            <span class="target-tag">GRAPH B</span>
+            <span class="floating-entity-title" id="paneBTitle">Target Candidate</span>
+            <span class="floating-metrics" id="paneBNodesCount">0 nodes</span>
+          </div>
+          <div class="network-viewport" id="networkCanvasB"></div>
+        </div>
+      </div>
+
+      <!-- Unified Preview Merge Container (Simulated Fusion) -->
+      <div class="preview-merge-container" id="previewCanvasContainer">
+        <div class="canvas-floating-chip chip-center">
+          <span class="sim-tag" id="previewSimTag">CANONICAL MERGE PREVIEW</span>
+          <span class="floating-entity-title" id="previewEntityTitle">Simulated Unified Canonical Entity Topology</span>
+          <span class="floating-metrics" id="previewNodesCount">0 nodes</span>
+          <div class="preview-depth-toggle" role="group" aria-label="Merge Preview Scope">
+            <button type="button" class="btn-depth-pill active" id="btnDepthNeighborhood" title="Show canonical entity with 1-hop neighbor sub-nodes">Neighborhood</button>
+            <button type="button" class="btn-depth-pill" id="btnDepthCore" title="Show only candidate pair merging into canonical entity">Core Only</button>
+          </div>
+        </div>
+        <div class="preview-legend-chip">
+          <span class="legend-dot dot-a"></span><span>Graph A</span>
+          <span class="legend-dot dot-b"></span><span>Graph B</span>
+          <span class="legend-dot dot-c"></span><span>Canonical / Shared</span>
+        </div>
+        <div class="network-viewport preview-viewport" id="networkCanvasPreview"></div>
+      </div>
+
+      <!-- Floating Bottom Action Dock: Clean, Minimalist & Instant -->
+      <div class="floating-action-dock" id="floatingDecisionDock" role="toolbar" aria-label="Alignment Decision Dock">
+        <div class="dock-pair-info" id="dockPairChip" title="Active candidate pair">
+          <span class="dock-src" id="chipSrcLabel">EGFR Gene</span>
+          <span class="dock-arrow">&harr;</span>
+          <span class="dock-tgt" id="chipTgtLabel">EGFR Protein</span>
+          <span class="dock-score" id="chipScorePill">0.88</span>
+        </div>
+
+        <div class="dock-divider"></div>
+
+        <div class="dock-actions">
+          <button type="button" class="btn-dock btn-dock-verify" id="btnRunVerification" title="Run Local 8B Model Verification">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
+            </svg>
+            <span>8B Verify</span>
+          </button>
+
+          <button type="button" class="btn-dock btn-dock-accept" id="btnAcceptSame" title="Accept as SAME Entity (Auto-Merge)">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="20 6 9 17 4 12"></polyline>
+            </svg>
+            <span>Accept</span>
+          </button>
+
+          <button type="button" class="btn-dock btn-dock-reject" id="btnMarkDifferent" title="Mark as DIFFERENT (Coexist / Keep-Separate)">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="18" y1="6" x2="6" y2="18"></line>
+              <line x1="6" y1="6" x2="18" y2="18"></line>
+            </svg>
+            <span>Different</span>
+          </button>
+
+          <button type="button" class="btn-dock btn-dock-review" id="btnFlagReview" title="Flag for Secondary Expert Review">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="10"></circle>
+              <line x1="12" y1="8" x2="12" y2="12"></line>
+              <line x1="12" y1="16" x2="12.01" y2="16"></line>
+            </svg>
+            <span>Review</span>
+          </button>
+        </div>
+
+        <div class="dock-divider"></div>
+
+        <button type="button" class="btn-dock btn-dock-info" id="btnDockDetails" title="Open Deep Signals & Details Inspector">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="10"></circle>
+            <line x1="12" y1="16" x2="12" y2="12"></line>
+            <line x1="12" y1="8" x2="12.01" y2="8"></line>
+          </svg>
+          <span>Signals</span>
+        </button>
+
+        <!-- Dynamic Micro-Toast Notification inside Dock -->
+        <div class="dock-toast" id="decisionToast">
+          <span class="dock-toast-dot"></span>
+          <span class="dock-toast-text" id="toastMessage">Decision recorded.</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Right Drawer: Inspector & Deep Signals Panel -->
+    <aside class="sidebar-inspector collapsed" id="sidebarInspector" aria-label="Details and Inspector Panel">
+      <div class="drawer-header">
+        <div class="drawer-title-row">
+          <h2>Inspector &bull; Signals</h2>
+          <button type="button" class="btn-drawer-close" id="btnCloseInspector" title="Close Inspector Panel">&times;</button>
+        </div>
+        <p class="drawer-subtitle">Comprehensive topological signals, model reasoning, and ontological attributes.</p>
+      </div>
+
+      <div class="inspector-scrollable">
+        <!-- Comparison Card -->
+        <div class="inspector-section">
+          <div class="inspector-section-header">
+            <h3>Entity Comparison</h3>
+            <span class="status-badge-mini" id="matchMethodBadge">Vector Similarity</span>
+          </div>
+          
+          <div class="comparison-cards-row">
+            <div class="mini-spec-card spec-a">
+              <span class="spec-tag">Source (A)</span>
+              <h4 id="specAName">EGFR Gene</h4>
+              <div class="spec-id" id="specAId">HGNC:3236</div>
+              <div class="spec-meta-row">
+                <span class="meta-badge" id="specAType">Gene</span>
+                <span class="meta-edges" id="specAEdges">4 edges</span>
+              </div>
+            </div>
+
+            <div class="mini-spec-card spec-b">
+              <span class="spec-tag">Candidate (B)</span>
+              <h4 id="specBName">EGFR Protein</h4>
+              <div class="spec-id" id="specBId">UniProt:P00533</div>
+              <div class="spec-meta-row">
+                <span class="meta-badge" id="specBType">Protein</span>
+                <span class="meta-edges" id="specBEdges">5 edges</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Matching Signals Breakdown -->
+        <div class="inspector-section">
+          <div class="inspector-section-header">
+            <h3>Matching Signals</h3>
+          </div>
+          <div class="signals-list">
+            <div class="signal-row">
+              <span class="signal-name">Lexical Overlap</span>
+              <span class="signal-bar"><span class="bar-fill" id="sigNameFill"></span></span>
+              <span class="signal-value" id="sigNameVal">0.90</span>
+            </div>
+            <div class="signal-row">
+              <span class="signal-name">Type Compatibility</span>
+              <span class="signal-bar"><span class="bar-fill" id="sigTypeFill"></span></span>
+              <span class="signal-value" id="sigTypeVal">0.20</span>
+            </div>
+            <div class="signal-row">
+              <span class="signal-name">Shared Neighbors</span>
+              <span class="signal-bar"><span class="bar-fill" id="sigRelFill"></span></span>
+              <span class="signal-value" id="sigRelVal">2 shared</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Model Verifier Details Card -->
+        <div class="inspector-section">
+          <div class="inspector-section-header">
+            <h3>8B Model Evaluation</h3>
+            <span class="outcome-badge-mini abstain" id="verifierStatusBadge">UNVERIFIED</span>
+          </div>
+          
+          <div class="model-select-row">
+            <label for="studioModelSelect">Local Model:</label>
+            <select id="studioModelSelect" class="inspector-select">
+              <option value="llama3.1:8b-instruct-q8_0">llama3.1:8b-instruct-q8_0</option>
+            </select>
+          </div>
+
+          <div class="reasoning-display" id="reasoningBox">
+            <div class="reasoning-empty">
+              <span>Click "8B Verify" on the bottom dock to analyze ontological cross-references.</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Audit & Lineage Info -->
+        <div class="inspector-section">
+          <div class="inspector-section-header">
+            <h3>Provenance &amp; Durability</h3>
+          </div>
+          <p class="provenance-note">
+            Decisions commit append-only state events signed by <code>EXPERT_REVIEWER</code> into <code>DurableAssertionStore</code> with deterministic event replay.
+          </p>
+        </div>
+      </div>
+    </aside>
+  </main>
+
+  <script src="auth_client.js"></script>
+  <script src="theme.js"></script>
+  <script src="alignment_studio.js"></script>
+</body>
+</html>
